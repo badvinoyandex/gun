@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ТИХИЙ БОР · Forest Front</title>
+<script type="importmap">
+{"imports":{"three":"https://unpkg.com/three@0.166.1/build/three.module.js","three/addons/":"https://unpkg.com/three@0.166.1/examples/jsm/"}}
+</script>
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;overflow:hidden;background:#05070a;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  canvas{display:block}
+  #gate{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;color:#e6eae6;text-align:center;padding:24px;
+        background:radial-gradient(120% 90% at 50% 20%,rgba(18,26,22,.92) 0%,rgba(6,8,9,.97) 70%);transition:opacity .5s}
+  #gate.hide{opacity:0;pointer-events:none}
+  #gate .in{max-width:680px;width:100%}
+  #gate h1{margin:0;font-size:30px;font-weight:700;letter-spacing:.14em}
+  #gate .sub{font-size:11.5px;color:#7d8a80;margin:6px 0 20px;letter-spacing:.3em;text-transform:uppercase}
+  #gate p{margin:8px 0;font-size:13.5px;line-height:1.6;color:#9aa69c}
+  .keys{display:grid;grid-template-columns:repeat(3,1fr);gap:5px 18px;margin:18px auto;max-width:640px;text-align:left;font-size:12px;color:#9aa69c}
+  .keys b{display:inline-block;min-width:74px;color:#e6eae6;font:600 11px/1.7 ui-monospace,Menlo,Consolas,monospace}
+  .row{display:flex;gap:8px;justify-content:center;margin:0 0 14px;flex-wrap:wrap}
+  .row button{font:600 12px/1 inherit;padding:9px 16px;border-radius:6px;background:#1b2220;color:#96a398;border:1px solid #28302d;cursor:pointer}
+  .row button.on{background:#6f8f72;color:#0a0d0b}
+  #teams button[data-t=A].on{background:#2c5680;color:#e8e2cc}
+  #teams button[data-t=D].on{background:#94361f;color:#e8e2cc}
+  .go{font:700 15px/1.2 inherit;color:#0a0d0b;background:#cfd8cd;border:0;border-radius:8px;padding:14px 38px;cursor:pointer;letter-spacing:.04em;margin:4px}
+  .go:hover{background:#fff}
+  .go.alt{background:#2a332f;color:#cfd8cd}
+  .load{font-size:12.5px;color:#68756b;letter-spacing:.09em}
+  #bar{width:320px;height:3px;background:#1d2422;border-radius:2px;margin:14px auto 0;overflow:hidden}
+  #bar i{display:block;height:100%;width:0;background:#6f8f72;transition:width .25s}
+  .lbl{font-size:10.5px;letter-spacing:.2em;color:#68756b;text-transform:uppercase;margin:12px 0 6px}
+
+  #hud{position:fixed;inset:0;z-index:20;pointer-events:none;display:none;font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;color:#d6ddd3;text-shadow:0 1px 3px #000}
+  #hud.on{display:block}
+  #hud.clean #osd,#hud.clean #clock,#hud.clean #cross,#hud.clean #zone{display:none}
+  #cross{position:absolute;left:50%;top:50%;width:22px;height:22px;margin:-11px 0 0 -11px;opacity:.6;border:1px solid rgba(230,240,230,.55);border-radius:50%}
+  #cross:after{content:"";position:absolute;left:50%;top:50%;width:2px;height:2px;margin:-1px;background:#e8efe6}
+  #clock{position:absolute;right:14px;top:10px;text-align:right}
+  #clock b{font-size:18px;letter-spacing:.04em}
+  #clock span{display:block;font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:#8fa08f}
+  #osd{position:absolute;left:14px;top:10px;font-size:12px}
+  #osd span{color:#8fa08f;font-size:10.5px}
+  #zone{position:absolute;left:50%;top:18%;transform:translateX(-50%);font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:#cfd8cd;opacity:.85}
+  #zone.warn{color:#ff7a5c;animation:blink 1s steps(2) infinite;font-weight:700}
+  @keyframes blink{50%{opacity:.35}}
+  #toast{position:absolute;left:50%;bottom:70px;transform:translateX(-50%);opacity:0;transition:opacity .3s;text-align:center}
+  #toast.on{opacity:.95}
+  #help{position:absolute;left:14px;bottom:12px;color:#9fb0a2;display:none;font-size:11px;line-height:1.7;white-space:pre}
+  #help.on{display:block}
+  #map{position:absolute;right:14px;bottom:14px;display:none;border:1px solid #3a463c;box-shadow:0 6px 30px rgba(0,0,0,.6);background:#111}
+  #map.on{display:block}
+  #map canvas{width:min(46vh,460px);height:min(46vh,460px);display:block}
+  #dead{position:fixed;inset:0;z-index:30;display:none;flex-direction:column;align-items:center;justify-content:center;color:#f0d8d0;font:700 26px/1.4 system-ui,sans-serif;letter-spacing:.12em}
+  #dead.on{display:flex}
+  #dead span{font:500 13px/1.6 ui-monospace,monospace;letter-spacing:.1em;color:#c9a89e}
+  #fps{position:fixed;left:8px;bottom:8px;z-index:40;display:none;color:#93a897;white-space:pre;font:11px/1.45 ui-monospace,Menlo,Consolas,monospace;text-shadow:0 0 3px #000}
+</style>
+</head>
+<body>
+<div id="gate"><div class="in">
+  <h1>ТИХИЙ БОР</h1>
+  <div class="sub">Forest Front · карта для перестрелки</div>
+  <div id="g_load">
+    <p class="load" id="g_stage">Подготовка…</p>
+    <div id="bar"><i></i></div>
+  </div>
+  <div id="g_ready" style="display:none">
+    <p>Заброшенная турбаза в сосновом бору у лесного озера. Окопы, пустые срубы, ржавые машины.
+       Базы Alpha и Delta — в противоположных углах. Периметр заминирован.<br>
+       Полные сутки: день → закат → ночь с фонарями вдоль троп → рассвет.</p>
+    <div class="lbl">команда</div>
+    <div class="row" id="teams"><button data-t="A" class="on">ALPHA · юго-запад</button><button data-t="D">DELTA · северо-восток</button></div>
+    <div class="lbl">качество</div>
+    <div class="row" id="qrow"></div>
+    <div class="keys">
+      <div><b>мышь</b>обзор</div><div><b>W A S D</b>полёт</div><div><b>Space / E</b>вверх</div>
+      <div><b>C / Q</b>вниз</div><div><b>Shift</b>быстрее</div><div><b>колесо</b>скорость</div>
+      <div><b>ЛКМ</b>сброс гранаты</div><div><b>G</b>дрон ⇄ пешком</div><div><b>F</b>прожектор</div>
+      <div><b>M</b>карта</div><div><b>P</b>облёт</div><div><b>R</b>на базу</div>
+      <div><b>N</b>фаза суток</div><div><b>1..4</b>утро…ночь</div><div><b>T · [ ]</b>время</div>
+      <div><b>U</b>звук</div><div><b>V</b>интерфейс</div><div><b>Esc</b>пауза</div>
+    </div>
+    <button class="go" id="g_go">Взлететь</button><button class="go alt" id="g_cine">Облёт карты</button>
+  </div>
+</div></div>
+<div id="hud">
+  <div id="cross"></div>
+  <div id="osd"></div>
+  <div id="clock"><b>09:00</b><span>день</span></div>
+  <div id="zone"></div>
+  <div id="toast"></div>
+  <div id="help"></div>
+  <div id="map"><canvas></canvas></div>
+</div>
+<div id="dead"><div></div><span></span></div>
+<div id="fps"></div>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
