@@ -146,6 +146,8 @@ const PATH_IDX = makeIndex(PATHS, 3);
    тропу, автоматически рвётся: у тропы — пологие выходы-аппарели. Конец окопа,
    упирающийся в другой окоп, остаётся открытым (стык без аппарели и стенок). */
 export const TRENCHES = [];
+/** Воронки от взрывов в игре: {x, z, r, dep, rim}. */
+export const DYN_CRATERS = [];
 /** Профиль окопа: обшивка на TW.wall от оси, дно ровное до TW.floor, стенка грунта до TW.top. */
 export const TW = { wall: 0.66, floor: 0.8, top: 1.1, cap: 1.08, ramp: 3.2 };
 function zigzag(cx, cz, ax, az, t0, t1, amp, step = 5) {
@@ -381,7 +383,18 @@ export function terrainH(x, z) {
     const d = Math.hypot(dx, dz) / c.r;
     if (d < 1.6) h += -0.55 * c.r * 0.32 * Math.max(0, 1 - d * d) + 0.16 * c.r * 0.3 * Math.exp(-Math.pow((d - 1.05) / 0.25, 2));
   }
+  // Воронки, появившиеся в бою.
+  for (let i = 0; i < DYN_CRATERS.length; i++) {
+    const c = DYN_CRATERS[i], dx = x - c.x, dz = z - c.z, R = c.r * 1.6;
+    if (dx > R || dx < -R || dz > R || dz < -R) continue;
+    h += craterDelta(c, x, z);
+  }
   return h;
+}
+export function craterDelta(c, x, z) {
+  const d = Math.hypot(x - c.x, z - c.z) / c.r;
+  if (d >= 1.6) return 0;
+  return -c.dep * Math.max(0, 1 - d * d) * (1 - 0.25 * d * d) + c.rim * Math.exp(-Math.pow((d - 1.02) / 0.22, 2));
 }
 export function terrainNormal(x, z, out) {
   const e = 0.35;

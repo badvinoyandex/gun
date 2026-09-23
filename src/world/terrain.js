@@ -1,8 +1,10 @@
 import * as THREE from 'three';
+import { FXU, FXU_GLSL } from '../core/fxu.js';
 import { scene, Q } from '../core/env.js';
 import { MAP, terrainH, splat, edgeDist, TRENCHES, CRATERS, PADS, lakeRho, pathInfluence } from './layout.js';
 import { TEX } from '../gen/materials.js';
 import { forestDensity } from './forest.js';
+import { hFast } from './heightcache.js';
 
 /* ============================================================================
    МЕШ РЕЛЬЕФА
@@ -29,12 +31,18 @@ function chunkStep(x0, z0) {
   return 1.0;
 }
 
+/** Затенение ямы: насколько точка ниже окружения (дно окопа, воронки, низины). */
+export function aoAt(x, z, h) {
+  let s = 0;
+  for (const [dx, dz] of [[1.3, 0], [-1.3, 0], [0, 1.3], [0, -1.3], [0.9, 0.9], [-0.9, -0.9], [0.9, -0.9], [-0.9, 0.9]]) s += Math.max(0, hFast(x + dx, z + dz) - h);
+  return Math.max(0.42, 1 - s / 8 * 0.55);
+}
 function gridChunk(x0, z0, size, step, skirt) {
   const n = Math.round(size / step), s = size / n;
   const N = n + 3;                       // +1 клетка с каждой стороны для нормалей
   const H = new Float32Array(N * N);
   for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) H[j * N + i] = terrainH(x0 + (i - 1) * s, z0 + (j - 1) * s);
-  const V = n + 1, pos = [], nrm = [], spl = [], idx = [];
+  const V = n + 1, pos = [], nrm = [], spl = [], idx = [], ao = [];
   const sp = [0, 0, 0];
   for (let j = 0; j < V; j++) for (let i = 0; i < V; i++) {
     const x = x0 + i * s, z = z0 + j * s, gi = (j + 1) * N + (i + 1);
@@ -43,6 +51,7 @@ function gridChunk(x0, z0, size, step, skirt) {
     nrm.push(nx / l, ny / l, nz / l);
     splat(x, z, sp);
     spl.push(sp[0], sp[1], sp[2], forestDensity(x, z));
+    ao.push(aoAt(x, z, H[gi]));
   }
   for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
     const a = j * V + i, b = a + 1, c = a + V, d = c + 1;
@@ -59,6 +68,7 @@ function gridChunk(x0, z0, size, step, skirt) {
         pos.push(pos[k * 3], pos[k * 3 + 1] - 1.2, pos[k * 3 + 2]);
         nrm.push(nrm[k * 3], nrm[k * 3 + 1], nrm[k * 3 + 2]);
         spl.push(spl[k * 4], spl[k * 4 + 1], spl[k * 4 + 2], spl[k * 4 + 3]);
+        ao.push(ao[k]);
       }
       idx.push(a, b, base, b, base + 1, base);
     }
@@ -90,6 +100,7 @@ function outerRing() {
     splat(x, z, sp);
     spl.push(0, 0, sp[2], forestDensity(x, z));
   }
+  const aoOuter = new Float32Array(pos.length / 3).fill(1);
   for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
     const a = map[j * (n + 1) + i], b = map[j * (n + 1) + i + 1], c = map[(j + 1) * (n + 1) + i], d = map[(j + 1) * (n + 1) + i + 1];
     if (a < 0 || b < 0 || c < 0 || d < 0) continue;
@@ -101,6 +112,7 @@ function outerRing() {
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
   g.setAttribute('aSplat', new THREE.Float32BufferAttribute(spl, 4));
+  g.setAttribute('aAO', new THREE.BufferAttribute(aoOuter, 1));
   g.setIndex(idx);
   g.computeBoundingSphere();
   return g;
@@ -119,12 +131,15 @@ function groundMaterial() {
   };
   m.onBeforeCompile = sh => {
     Object.assign(sh.uniforms, U);
-    sh.vertexShader = 'attribute vec4 aSplat;\nvarying vec4 vSplat;\nvarying vec3 vWPos;\nvarying vec3 vWN;\n' +
-      sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvSplat = aSplat;\nvWPos = (modelMatrix * vec4(transformed,1.0)).xyz;\nvWN = normalize(mat3(modelMatrix) * objectNormal);');
+    Object.assign(sh.uniforms, FXU);
+    sh.vertexShader = 'attribute vec4 aSplat;\nattribute float aAO;\nvarying vec4 vSplat;\nvarying vec3 vWPos;\nvarying vec3 vWN;\nvarying float vAO;\n' +
+      sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvSplat = aSplat;\nvAO = aAO;\nvWPos = (modelMatrix * vec4(transformed,1.0)).xyz;\nvWN = normalize(mat3(modelMatrix) * objectNormal);');
     sh.fragmentShader = /* glsl */`
       uniform sampler2D tFloor, tFloorN, tPath, tPathN, tMud, tMudN, tDug, tDugN;
       uniform float uWet;
-      varying vec4 vSplat; varying vec3 vWPos; varying vec3 vWN;
+      varying vec4 vSplat; varying vec3 vWPos; varying vec3 vWN; varying float vAO;
+      ${FXU_GLSL}
+      vec4 gBurn; float gPuddle; float gWetK; vec2 gRipple;
       float gHash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
       float gNoise(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
         return mix(mix(gHash(i), gHash(i+vec2(1,0)), f.x), mix(gHash(i+vec2(0,1)), gHash(i+vec2(1,1)), f.x), f.y); }
@@ -158,13 +173,27 @@ function groundMaterial() {
         gW = vec3(wP, wM, wD);
         // затопленный берег темнее, дно под водой — ещё темнее
         col *= mix(1.0, 0.55, smoothstep(0.35, 0.95, vSplat.y) * (1.0 - wP));
+        // гарь: копоть с пятнами пепла
+        gBurn = burnAt(wuv);
+        float ash = gNoise(wuv * 2.3);
+        col = mix(col, mix(vec3(0.028, 0.025, 0.022), vec3(0.16, 0.15, 0.14), smoothstep(0.62, 0.9, ash) * 0.6), gBurn.r * 0.92);
+        // мокрая земля темнее; лужи — в колеях, низинах, воронках и на дне окопов
+        gWetK = uWetG * (1.0 - smoothstep(0.35, 0.9, vSplat.w) * 0.35);
+        float low = smoothstep(0.92, 0.6, vAO);
+        float pn = gNoise(wuv * 0.23) * 0.65 + gNoise(wuv * 0.9) * 0.35;
+        gPuddle = smoothstep(0.58, 0.68, pn + low * 0.28 + wP * 0.12 + wD * 0.1 + gBurn.b * 0.6) * smoothstep(0.25, 0.8, uWetG) * (1.0 - wM * 0.5);
+        col *= mix(1.0, 0.6 - wP * 0.1, gWetK);
+        col = mix(col, col * vec3(0.55, 0.52, 0.5) + vec3(0.012, 0.014, 0.016), gPuddle);
         diffuseColor.rgb *= col;
+        diffuseColor.rgb *= mix(1.0, vAO, 0.55);
       `)
       .replace('#include <roughnessmap_fragment>', /* glsl */`
         float roughnessFactor = roughness;
         roughnessFactor = mix(roughnessFactor, 0.82, gW.x);
         roughnessFactor = mix(roughnessFactor, 0.48 - uWet * 0.2, smoothstep(0.4, 1.0, gW.y));
         roughnessFactor = mix(roughnessFactor, 0.97, gW.z);
+        roughnessFactor = mix(roughnessFactor, roughnessFactor * 0.5, gWetK);
+        roughnessFactor = mix(roughnessFactor, 0.04, gPuddle);
       `)
       .replace('#include <normal_fragment_maps>', /* glsl */`
         {
@@ -175,12 +204,36 @@ function groundMaterial() {
           vec3 nD = texture2D(tDugN, wuv * 0.3).xyz * 2.0 - 1.0;
           vec3 nt = nF;
           nt = mix(nt, nD, gW.z); nt = mix(nt, nP, gW.x); nt = mix(nt, nM * vec3(0.6, 0.6, 1.0), gW.y);
-          vec3 nW = normalize(normalize(vWN) + vec3(nt.x, 0.0, nt.y) * 0.9);
+          vec3 nW = normalize(normalize(vWN) + vec3(nt.x, 0.0, nt.y) * 0.9 * (1.0 - gPuddle * 0.9));
+          // капли по лужам: расходящиеся кольца в ячейках со случайной фазой
+          if (gPuddle > 0.01 && uRain > 0.01) {
+            vec2 rp = vec2(0.0);
+            for (int k = 0; k < 2; k++) {
+              vec2 cuv = wuv * (2.6 + float(k) * 1.7) + float(k) * 7.3;
+              vec2 ci = floor(cuv), cf = fract(cuv) - 0.5;
+              float h = gHash(ci + float(k) * 13.0);
+              vec2 o = vec2(gHash(ci + 3.1), gHash(ci + 5.7)) - 0.5;
+              float ph = fract(uFxT * (0.9 + h * 0.6) + h);
+              vec2 d = cf - o * 0.6; float r = length(d);
+              float ring = sin((r - ph * 0.5) * 60.0) * smoothstep(0.0, 0.05, ph * 0.5 - r + 0.05) * (1.0 - ph) * step(h, uRain * 0.9 + 0.1);
+              rp += d / max(r, 1e-3) * ring;
+            }
+            nW = normalize(nW + vec3(rp.x, 0.0, rp.y) * 0.35 * gPuddle);
+          }
           normal = normalize((viewMatrix * vec4(nW, 0.0)).xyz);
         }
+      `)
+      .replace('#include <aomap_fragment>', /* glsl */`
+        reflectedLight.indirectDiffuse *= vAO;
+        reflectedLight.indirectSpecular *= mix(vAO, 1.0, gPuddle * 0.6);
+      `)
+      .replace('#include <emissivemap_fragment>', /* glsl */`
+        // тлеющие угли: мерцают под пеплом, ночью заметно подсвечивают землю
+        float emb = gBurn.g * (0.6 + 0.4 * sin(uFxT * 7.0 + gNoise(vWPos.xz * 3.0) * 12.0)) * smoothstep(0.45, 0.85, gNoise(vWPos.xz * 4.3 + uFxT * 0.2));
+        totalEmissiveRadiance += vec3(1.0, 0.3, 0.05) * emb * emb * 1.4;
       `);
   };
-  m.customProgramCacheKey = () => 'ground-v1';
+  m.customProgramCacheKey = () => 'ground-v2';
   return m;
 }
 

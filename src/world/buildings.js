@@ -6,6 +6,7 @@ import { M, TEX } from '../gen/materials.js';
 import { box, cyl, place, frame } from './builders.js';
 import { addBox, addCircle as addCircle2 } from '../core/colliders.js';
 import { addLamp } from './lamps.js';
+import { addPane } from '../fx/glass.js';
 import { vehicle } from './vehicles.js';
 import { makeCloth } from './cloth.js';
 
@@ -85,7 +86,7 @@ export function house(o) {
       if (op.win) {
         B(M.planks, lx + nOut[0] * 0.12, fy + op.y0 - 0.03, lz + nOut[1] * 0.12, fw + 0.2, 0.06, 0.12, { r: S.r, tile: 1 });
         const state = R();
-        if (state < 0.4) {
+        if (state < 0.28) {
           // заколочено крест-накрест
           const [x, z] = P(lx + nOut[0] * 0.14, lz + nOut[1] * 0.14);
           for (const a of [0.7, -0.6]) box(M.planksDark, x, cy, z, fw * 1.25, 0.12, 0.03, { rot: o.rot + S.r, rz: a * (R() < 0.3 ? 0.4 : 1), tile: 1 });
@@ -94,7 +95,16 @@ export function house(o) {
           // рама с остатками стекла
           B(M.planks, lx, cy, lz, 0.05, fh, 0.06, { r: S.r, tile: 1 });
           B(M.planks, lx, cy + 0.15, lz, fw, 0.05, 0.06, { r: S.r, tile: 1 });
-          if (state > 0.7) B(M.glass, lx + ax * fw * 0.25, cy - 0.2, lz + az * fw * 0.25, fw * 0.4, 0.5, 0.01, { r: S.r });
+          if (state < 0.45) B(M.glass, lx + ax * fw * 0.25, cy - 0.2, lz + az * fw * 0.25, fw * 0.4, 0.5, 0.01, { r: S.r });
+          else {
+            // целая рама: четыре стекла (две створки, фрамуги сверху) — бьются взрывом и пулей
+            const yb = cy + 0.15, yTop = fy + op.y1, yBot = fy + op.y0;
+            for (const e of [-1, 1]) for (const [ya, yb2] of [[yBot, yb - 0.025], [yb + 0.025, yTop]]) {
+              if (R() < 0.12) continue;
+              const [px, pz] = P(lx + ax * e * fw * 0.25, lz + az * e * fw * 0.25);
+              addPane(px, (ya + yb2) / 2, pz, [0, o.rot + S.r, 0], fw / 2 - 0.05, yb2 - ya - 0.02);
+            }
+          }
         }
       }
       if (op.door) {

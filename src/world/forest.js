@@ -290,6 +290,40 @@ function silMaterial() {
 export const TREES = [];          // {x,y,z,h,sp,v,r}
 const TREE_GRID = new Map();
 const tkey = (x, z) => Math.floor(x / 6) * 4096 + Math.floor(z / 6);
+/** Деревья в радиусе (для взрывов, огня, молний). */
+export function treesNear(x, z, r) {
+  const out = [], n = Math.ceil(r / 6);
+  for (let i = -n; i <= n; i++) for (let j = -n; j <= n; j++) {
+    const L = TREE_GRID.get(tkey(x + i * 6, z + j * 6));
+    if (!L) continue;
+    for (const t of L) if (!t.broken && (t.x - x) ** 2 + (t.z - z) ** 2 < r * r) out.push(t);
+  }
+  return out;
+}
+const _zero = new THREE.Matrix4().makeScale(0, 0, 0);
+/** Убрать дерево из инстансов (ствол, крона, сердцевина) — его заменят обломки. */
+export function hideTree(t) {
+  t.broken = true;
+  t.L.trunkIM.setMatrixAt(t.i, _zero); t.L.trunkIM.instanceMatrix.needsUpdate = true;
+  if (t.core) { t.core.im.setMatrixAt(t.core.i, _zero); t.core.im.instanceMatrix.needsUpdate = true; }
+  updateForestLOD(true);
+}
+/** Обугливание: ствол и крона темнеют (0..1). */
+export function charTree(t, k) {
+  t.char = Math.max(t.char || 0, k);
+  const c = t.color, f = 1 - t.char * 0.8;
+  c.setRGB(c.r * f + 0.02 * t.char, c.g * f * 0.9, c.b * f * 0.8);
+  const tc = new THREE.Color(t.tint * (1 - t.char * 0.75), t.tint * (1 - t.char * 0.78), t.tint * (1 - t.char * 0.8));
+  t.L.trunkIM.setColorAt(t.i, tc); if (t.L.trunkIM.instanceColor) t.L.trunkIM.instanceColor.needsUpdate = true;
+  updateForestLOD(true);
+}
+/** Ободранная крона: темнее и реже (без отдельной геометрии — через тон). */
+export function thinTree(t, k) {
+  t.thin = Math.min(1, (t.thin || 0) + k);
+  t.color.multiplyScalar(1 - k * 0.25);
+  updateForestLOD(true);
+}
+export const treeGeo = t => ({ trunk: t.L.trunkIM.geometry, crown: t.L.hiIM.geometry, bark: t.L.trunkIM.material, foliage: t.L.hiIM.material, sp: t.L.sp });
 /** Есть ли ствол ближе r — чтобы реквизит не вставал в дерево. */
 export function treeNear(x, z, r) {
   for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
@@ -362,7 +396,7 @@ export function buildForest() {
     const k = tkey(x, z);
     if (!TREE_GRID.has(k)) TREE_GRID.set(k, []);
     TREE_GRID.get(k).push(t);
-    if (e < MAP.FENCE + 1) addCircle(x, z, Math.max(0.18, t.r * 1.05), t.y, t.y + h);
+    if (e < MAP.FENCE + 1) { t.col = addCircle(x, z, Math.max(0.18, t.r * 1.05), t.y, t.y + h); t.col.tree = t; }
   }
 
   // 3) инстанс-меши: ствол (все деревья варианта), крона hi и lo
@@ -385,6 +419,7 @@ export function buildForest() {
         p.set(t.x, t.y, t.z); q.setFromAxisAngle(new V3(0, 1, 0), t.rot); sc.setScalar(t.h);
         m.compose(p, q, sc);
         t.matrix = m.clone();
+        t.i = i;
         trunkIM.setMatrixAt(i, m);
         const k = t.tint;
         col.setRGB(k, k, k);
@@ -400,7 +435,9 @@ export function buildForest() {
       trunkIM.instanceMatrix.needsUpdate = true;
       if (trunkIM.instanceColor) trunkIM.instanceColor.needsUpdate = true;
       for (const im of [hiIM, loIM]) { im.count = 0; im.setColorAt(0, col); }
-      LODS.push({ trunkIM, hiIM, loIM, trees: v.trees, dead: false });
+      const rec = { trunkIM, hiIM, loIM, trees: v.trees, dead: false, sp: name };
+      for (const t of v.trees) t.L = rec;
+      LODS.push(rec);
     }
   }
   // мёртвые деревья минной полосы остаются голыми стволами (крона не выводится в LOD)
@@ -421,6 +458,7 @@ function buildCores(variants) {
     trees.forEach((t, i) => {
       im.setMatrixAt(i, t.matrix);
       col.copy(t.color).multiplyScalar(0.85); im.setColorAt(i, col);
+      t.core = { im, i };
     });
     im.castShadow = Q.shadowTrees; im.receiveShadow = true; im.frustumCulled = false;
     im.customDepthMaterial = depthFor(mat, { amp: 0.5, stiff: 2.2, refH: 18, flutter: 0, blast: 0.5 });
@@ -471,7 +509,7 @@ export function updateForestLOD(force) {
   for (const L of LODS) {
     let hi = 0, lo = 0;
     for (const t of L.trees) {
-      if (t.dead) continue;
+      if (t.dead || t.broken) continue;
       const dx = t.x - cp.x, dy = t.y + t.h * 0.5 - cp.y, dz = t.z - cp.z;
       const d2 = dx * dx + dy * dy + dz * dz;
       if (d2 < R2) { L.hiIM.setMatrixAt(hi, t.matrix); L.hiIM.setColorAt(hi, t.color); hi++; }

@@ -14,8 +14,13 @@ const res = await build({
   external: ['three', 'three/addons/*']
 });
 const js = res.outputFiles[0].text.replace(/<\/script/gi, '<\\/script');
+// ammo.js: загрузчик и wasm встраиваются, чтобы файл открывался без сервера
+const ammoJs = readFileSync('lib/ammo/ammo.wasm.js', 'utf8').replace(/<\/script/gi, '<\\/script');
+const ammoWasm = readFileSync('lib/ammo/ammo.wasm.wasm').toString('base64');
 const html = readFileSync('index.html', 'utf8')
+  .replace('<script src="./lib/ammo/ammo.wasm.js"></script>', () => `<script>window.AMMO_WASM_B64="${ammoWasm}";</script>\n<script>\n${ammoJs}\n</script>`)
   .replace('<script type="module" src="./src/main.js"></script>', () => `<script type="module">\n${js}\n</script>`);
+if (html.includes('src="./lib/ammo')) throw new Error('не удалось встроить ammo.js');
 if (html.includes('src="./src/main.js"')) throw new Error('не удалось встроить бандл');
 mkdirSync('dist', { recursive: true });
 writeFileSync('dist/tikhiy_bor.html', html);

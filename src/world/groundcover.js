@@ -40,8 +40,43 @@ function clumpGeo(planes, w, h, segs = 2) {
   return merged;
 }
 
+/** Пучок настоящих травинок: изогнутые сужающиеся ленты, у корня темнее, к кончику светлее и суше. */
+function tuftGeo(blades = 11, segs = 4) {
+  const pos = [], nrm = [], col = [], idx = [];
+  let v = 0;
+  const R = (k) => { const x = Math.sin(k * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
+  for (let b = 0; b < blades; b++) {
+    const a = R(b) * Math.PI * 2, rr = Math.sqrt(R(b + 17)) * 0.13;
+    const bx = Math.cos(a) * rr, bz = Math.sin(a) * rr;
+    const h = 0.32 + R(b + 31) * 0.5, w = 0.022 + R(b + 43) * 0.018;
+    const lean = 0.15 + R(b + 57) * 0.45, la = a + (R(b + 71) - 0.5) * 1.2;
+    const lx = Math.cos(la), lz = Math.sin(la), sx = -lz, sz = lx;
+    const dry = R(b + 83);
+    for (let k = 0; k <= segs; k++) {
+      const t = k / segs, y = h * t, off = lean * h * t * t;
+      const cx = bx + lx * off, cz = bz + lz * off, ww = w * (1 - t * 0.92);
+      for (const e of [-1, 1]) {
+        pos.push(cx + sx * ww * e, y, cz + sz * ww * e);
+        // нормаль: наполовину вверх, наполовину от стебля — пучок освещается как объём
+        nrm.push(lx * 0.35 + sx * e * 0.25, 0.85, lz * 0.35 + sz * e * 0.25);
+        const g = 0.35 + 0.65 * t;
+        col.push(g * (0.62 + dry * 0.35 * t), g * (0.9 + dry * 0.05), g * (0.42 - dry * 0.12 * t));
+      }
+      if (k < segs) { const q = v + k * 2; idx.push(q, q + 1, q + 2, q + 1, q + 3, q + 2); }
+    }
+    v += (segs + 1) * 2;
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  g.setIndex(idx);
+  g.computeBoundingSphere();
+  return g;
+}
+export const TUFTS = { im: null, center: new THREE.Vector2(1e9, 1e9), count: 0, R: 12 };
 export function buildGrass() {
-  injectWind(M.grass, { amp: 0.16, stiff: 1.6, refH: 0.8, flutter: 0.04, trample: true, blast: 1.4 });
+  injectWind(M.grass, { amp: 0.16, stiff: 1.6, refH: 0.8, flutter: 0.04, trample: true, blast: 1.4, burn: true });
   const im = new THREE.InstancedMesh(clumpGeo(3, 0.62, 0.62), M.grass, Q.grass);
   im.count = 0; im.frustumCulled = false; im.receiveShadow = true; im.castShadow = false;
   im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -49,21 +84,63 @@ export function buildGrass() {
   scene.add(im);
   NO_REFLECT.push(im);
   GRASS.im = im;
+  // ближний слой: геометрические травинки вокруг игрока
+  M.blades = new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.78, metalness: 0, color: 0x6f8a4a });
+  M.blades.emissive = new THREE.Color(0x0a1206);
+  injectWind(M.blades, { amp: 0.14, stiff: 1.5, refH: 0.6, flutter: 0.05, trample: true, blast: 1.5, burn: true });
+  TUFTS.R = Math.round(9 + 7 * Q.tex);
+  const n = Math.round(Q.grass * 0.28);
+  const tim = new THREE.InstancedMesh(tuftGeo(), M.blades, n);
+  tim.count = 0; tim.frustumCulled = false; tim.receiveShadow = true; tim.castShadow = Q.tex > 0.9;
+  tim.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  tim.name = 'grass_tufts';
+  scene.add(tim); NO_REFLECT.push(tim);
+  TUFTS.im = tim; TUFTS.max = n;
   refreshGrass(true);
 }
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vector3(), _s = new THREE.Vector3(), _c = new THREE.Color();
 const _up = new THREE.Vector3(0, 1, 0);
+function refreshTufts(force, cx, cz) {
+  const T = TUFTS, im = T.im;
+  if (!im) return;
+  if (!force && T.center.distanceTo(new THREE.Vector2(cx, cz)) < 1.8) return;
+  T.center.set(cx, cz);
+  const R = T.R, step = Math.sqrt(Math.PI * R * R / T.max) * 0.95;
+  let n = 0;
+  const i0 = Math.floor((cx - R) / step), i1 = Math.floor((cx + R) / step), j0 = Math.floor((cz - R) / step), j1 = Math.floor((cz + R) / step);
+  for (let i = i0; i <= i1 && n < T.max; i++) for (let j = j0; j <= j1 && n < T.max; j++) {
+    const h1 = hash2(i + 501, j - 77), h2 = hash2(j + 913, i + 41), h3 = hash2(i * 5 - 3, j * 3 + 11);
+    const x = (i + h1) * step, z = (j + h2) * step, dx = x - cx, dz = z - cz, d2 = dx * dx + dz * dz;
+    if (d2 > R * R) continue;
+    const dens = grassDensity(x, z);
+    if (h3 > dens * (0.25 + (1 - d2 / (R * R)) * 0.85)) continue;
+    const e = edgeDist(x, z);
+    const tall = e > MAP.PLAY - 2 && e < MAP.FENCE ? 1.5 : lakeRho(x, z) < 1.5 ? 1.3 : 1;
+    const sc = lerp(0.7, 1.35, hash2(i + 3, j + 7)) * tall;
+    _p.set(x, hFast(x, z) - 0.02, z); _q.setFromAxisAngle(_up, h1 * TAU); _s.set(sc, sc * lerp(0.75, 1.25, h2), sc);
+    im.setMatrixAt(n, _m.compose(_p, _q, _s));
+    const dry = tall > 1.4 ? 0.5 : (1 - forestDensity(x, z)) * 0.25, v = lerp(0.85, 1.15, h3);
+    _c.setRGB(v * lerp(0.95, 1.3, dry), v * lerp(1.0, 0.95, dry), v * lerp(0.95, 0.65, dry));
+    im.setColorAt(n, _c);
+    n++;
+  }
+  im.count = n; T.count = n;
+  im.instanceMatrix.needsUpdate = true;
+  if (im.instanceColor) im.instanceColor.needsUpdate = true;
+}
 export function refreshGrass(force) {
   const im = GRASS.im;
   if (!im) return;
   const cx = camera.position.x, cz = camera.position.z;
   const agl = camera.position.y - hFast(cx, cz);
   // с высоты дрона трава не видна — не тратим на неё кадр
-  if (agl > 55) { if (im.count) { im.count = 0; } GRASS.center.set(1e9, 1e9); return; }
+  if (agl > 55) { if (im.count) { im.count = 0; TUFTS.im.count = 0; } GRASS.center.set(1e9, 1e9); TUFTS.center.set(1e9, 1e9); return; }
+  if (agl < 25) refreshTufts(force, cx, cz); else TUFTS.im.count = 0;
   const R = Q.grassR;
   if (!force && GRASS.center.distanceTo(new THREE.Vector2(cx, cz)) < R * 0.22) return;
   GRASS.center.set(cx, cz);
   const step = Math.sqrt(Math.PI * R * R / Q.grass) * 0.92;
+  const RN = TUFTS.R * 0.55;
   let n = 0;
   const i0 = Math.floor((cx - R) / step), i1 = Math.floor((cx + R) / step);
   const j0 = Math.floor((cz - R) / step), j1 = Math.floor((cz + R) / step);
@@ -72,7 +149,8 @@ export function refreshGrass(force) {
     const x = (i + h1) * step, z = (j + h2) * step;
     const dx = x - cx, dz = z - cz, d2 = dx * dx + dz * dz;
     if (d2 > R * R) continue;
-    // плотность падает к краю радиуса: граница не видна
+    // вблизи основную массу дают травинки — карточек меньше
+    if (d2 < RN * RN && h1 < 0.55) continue;
     const fade = 1 - d2 / (R * R);
     const dens = grassDensity(x, z);
     if (h3 > dens * (0.35 + fade * 0.75)) continue;
@@ -85,7 +163,6 @@ export function refreshGrass(force) {
     _s.set(sc, sc * lerp(0.7, 1.2, h2), sc);
     _m.compose(_p, _q, _s);
     im.setMatrixAt(n, _m);
-    // сухая трава на минной полосе и солнечных полянах, сочная у воды
     const dry = tall > 1.5 ? 0.55 : (1 - forestDensity(x, z)) * 0.25;
     const v = lerp(0.8, 1.15, h3);
     _c.setRGB(v * lerp(0.85, 1.25, dry), v * lerp(0.95, 1.0, dry), v * lerp(0.8, 0.6, dry));
@@ -101,8 +178,8 @@ export function refreshGrass(force) {
 /** Статичный подлесок по всей игровой зоне. */
 export function buildUndergrowth() {
   const R = rng(4242);
-  injectWind(M.fern, { amp: 0.12, stiff: 1.5, refH: 0.9, flutter: 0.05, trample: true, blast: 1.2 });
-  injectWind(M.shrub, { amp: 0.05, stiff: 1.5, refH: 0.5, flutter: 0.03, trample: true, blast: 1.0 });
+  injectWind(M.fern, { amp: 0.12, stiff: 1.5, refH: 0.9, flutter: 0.05, trample: true, blast: 1.2, burn: true });
+  injectWind(M.shrub, { amp: 0.05, stiff: 1.5, refH: 0.5, flutter: 0.03, trample: true, blast: 1.0, burn: true });
   const place = (count, mat, geo, test, scale, tint) => {
     const pts = [];
     for (let k = 0; k < count * 6 && pts.length < count; k++) {

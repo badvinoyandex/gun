@@ -7,7 +7,7 @@ import { clamp, lerp } from '../core/math.js';
    раньше, чем слышно, — на дистанции это сразу читается.
 ============================================================================ */
 export const AUDIO = { ctx: null, master: null, on: true, t: 0, nextBird: 3, nextCricket: 0, nextShell: 20, nextOwl: 30 };
-let noiseBuf, windGain, windFilter, droneOsc, droneGain, droneFilter, cricketGain;
+let noiseBuf, windGain, windFilter, droneOsc, droneGain, droneFilter, cricketGain, rainGain, rainFilter, fireGain, fireFilter;
 
 export function initAudio() {
   if (AUDIO.ctx) { AUDIO.ctx.resume(); return; }
@@ -39,6 +39,86 @@ export function initAudio() {
   droneOsc.forEach((o, i) => { o.type = 'sawtooth'; o.frequency.value = 180 + i * 3.7; o.connect(droneFilter); o.start(); });
   droneFilter.connect(droneGain); droneGain.connect(AUDIO.master);
   cricketGain = ctx.createGain(); cricketGain.gain.value = 0; cricketGain.connect(AUDIO.master);
+  // дождь: белый шум через полосовой фильтр; огонь: треск — шум, промодулированный щелчками
+  const white = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate), wd = white.getChannelData(0);
+  for (let i = 0; i < wd.length; i++) wd[i] = Math.random() * 2 - 1;
+  const rain = ctx.createBufferSource(); rain.buffer = white; rain.loop = true;
+  rainFilter = ctx.createBiquadFilter(); rainFilter.type = 'bandpass'; rainFilter.frequency.value = 2400; rainFilter.Q.value = 0.35;
+  rainGain = ctx.createGain(); rainGain.gain.value = 0;
+  rain.connect(rainFilter); rainFilter.connect(rainGain); rainGain.connect(AUDIO.master); rain.start();
+  const crackle = ctx.createBuffer(1, ctx.sampleRate * 3, ctx.sampleRate), cd = crackle.getChannelData(0);
+  for (let i = 0; i < cd.length; i++) cd[i] = (Math.random() < 0.0009 ? (Math.random() * 2 - 1) * 3 : 0) + (Math.random() * 2 - 1) * 0.12;
+  const fire = ctx.createBufferSource(); fire.buffer = crackle; fire.loop = true;
+  fireFilter = ctx.createBiquadFilter(); fireFilter.type = 'highpass'; fireFilter.frequency.value = 700;
+  fireGain = ctx.createGain(); fireGain.gain.value = 0;
+  fire.connect(fireFilter); fireFilter.connect(fireGain); fireGain.connect(AUDIO.master); fire.start();
+}
+/** Короткая шумовая пачка через фильтр: основа для стекла, треска, выстрела, грома. */
+function burst(t, { type = 'bandpass', f = 1000, f1 = null, q = 1, vol = 0.3, a = 0.002, dec = 0.3, x = 0, len = 1 }) {
+  const ctx = AUDIO.ctx;
+  const src = ctx.createBufferSource(); src.buffer = noiseBuf;
+  const fl = ctx.createBiquadFilter(); fl.type = type; fl.frequency.setValueAtTime(f, t); fl.Q.value = q;
+  if (f1) fl.frequency.exponentialRampToValueAtTime(f1, t + a + dec);
+  const g = ctx.createGain(); env(g, t, a, vol, dec);
+  const p = pan(ctx, x);
+  src.connect(fl); fl.connect(g); g.connect(p); p.connect(AUDIO.master);
+  src.start(t, Math.random() * 3); src.stop(t + a + dec + len * 0.1 + 0.05);
+}
+const ready = () => AUDIO.ctx && AUDIO.on;
+/** Бьющееся стекло: хруст и россыпь звенящих осколков. */
+export function glassSound(dist, x = 0) {
+  if (!ready()) return;
+  const ctx = AUDIO.ctx, t = ctx.currentTime + dist / 343, v = clamp(1.2 / (1 + dist / 8), 0.02, 0.6);
+  burst(t, { type: 'highpass', f: 2500, vol: v, dec: 0.25, x });
+  for (let i = 0; i < 9; i++) {
+    const o = ctx.createOscillator(), g = ctx.createGain(), t0 = t + 0.02 + Math.random() * 0.45;
+    o.type = 'sine'; o.frequency.value = 3000 + Math.random() * 5000;
+    env(g, t0, 0.001, v * 0.12, 0.05 + Math.random() * 0.12);
+    const p = pan(ctx, x); o.connect(g); g.connect(p); p.connect(AUDIO.master); o.start(t0); o.stop(t0 + 0.3);
+  }
+}
+/** Треск ломающегося дерева: серия сухих щелчков и низкий стон. */
+export function woodCrack(dist, x = 0, big = 1) {
+  if (!ready()) return;
+  const ctx = AUDIO.ctx, t = ctx.currentTime + dist / 343, v = clamp(big * 1.1 / (1 + dist / 15), 0.02, 0.8);
+  for (let i = 0; i < 4 + big * 4; i++) burst(t + i * (0.03 + Math.random() * 0.07), { type: 'bandpass', f: 900 + Math.random() * 1800, q: 2, vol: v * (0.4 + Math.random() * 0.6), dec: 0.06, x });
+  if (big > 0.6) burst(t + 0.2, { type: 'lowpass', f: 400, f1: 120, vol: v * 0.8, a: 0.05, dec: 1.4, x, len: 10 });
+}
+/** Выстрел: резкий хлопок и хвост эха в лесу. */
+export function shotSound() {
+  if (!ready()) return;
+  const t = AUDIO.ctx.currentTime;
+  burst(t, { type: 'lowpass', f: 6000, f1: 300, vol: 0.9, a: 0.001, dec: 0.18 });
+  burst(t + 0.005, { type: 'bandpass', f: 180, q: 0.7, vol: 0.6, a: 0.002, dec: 0.25 });
+  burst(t + 0.15, { type: 'lowpass', f: 1200, f1: 200, vol: 0.12, a: 0.05, dec: 1.2, len: 10 });
+}
+/** Гром: треск близкого разряда или долгий рокот дальнего. */
+export function thunder(dist) {
+  if (!ready()) return;
+  const t = AUDIO.ctx.currentTime + dist / 343, near = clamp(1 - dist / 900, 0, 1), v = clamp(1.3 / (1 + dist / 400), 0.08, 1.1);
+  if (near > 0.6) burst(t, { type: 'highpass', f: 1500, vol: v * 0.8, a: 0.001, dec: 0.25 });
+  for (let i = 0; i < 4; i++) burst(t + i * (0.3 + Math.random() * 0.6), { type: 'lowpass', f: 300 + near * 900, f1: 60, q: 0.5, vol: v * (1 - i * 0.18), a: 0.08, dec: 1.5 + Math.random() * 1.5, x: Math.random() - 0.5, len: 30 });
+}
+/** Свист подлетающего снаряда: тон падает за dur секунд. */
+export function whistleSound(dur = 0.9) {
+  if (!ready()) return;
+  const ctx = AUDIO.ctx, t = ctx.currentTime, o = ctx.createOscillator(), g = ctx.createGain();
+  o.type = 'sine'; o.frequency.setValueAtTime(1500 + Math.random() * 300, t); o.frequency.exponentialRampToValueAtTime(420, t + dur);
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.05, t + dur * 0.7); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g); g.connect(AUDIO.master); o.start(t); o.stop(t + dur + 0.05);
+}
+/** Всплеск/чавканье шага по луже и грязи. */
+export function squelch(k) {
+  if (!ready() || k < 0.05) return;
+  burst(AUDIO.ctx.currentTime, { type: 'bandpass', f: 500 + Math.random() * 400, q: 1.5, vol: 0.05 * k, a: 0.01, dec: 0.12 });
+}
+/** Громкость петель погоды и огня (0..1). */
+export function setLoops(rain, fire) {
+  if (!AUDIO.ctx) return;
+  const t = AUDIO.ctx.currentTime;
+  rainGain.gain.setTargetAtTime(AUDIO.on ? rain * 0.16 : 0, t, 0.6);
+  rainFilter.frequency.setTargetAtTime(1800 + rain * 1400, t, 0.6);
+  fireGain.gain.setTargetAtTime(AUDIO.on ? Math.min(0.35, fire * 0.3) : 0, t, 0.3);
 }
 function env(g, t0, a, peak, dec) {
   g.gain.cancelScheduledValues(t0);

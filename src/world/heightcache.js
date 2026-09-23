@@ -43,3 +43,5 @@ function grassDensityExact(x, z) {
   if (td < 2.2) d += 0.3;                                     // на брустверах
   return clamp(d, 0, 1.3);
 }
+/** Для физики и воронок: сам кэш и его сетка. */
+export const heightGrid = () => ({ H, HN, HS, R, GD, DN, DS });

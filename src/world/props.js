@@ -7,6 +7,7 @@ import { M } from '../gen/materials.js';
 import { place, box, cyl } from './builders.js';
 import { addBox, addCircle } from '../core/colliders.js';
 import { vehicle } from './vehicles.js';
+import { PHYS, addBody } from '../core/physics.js';
 import { treeNear } from './forest.js';
 
 /* ============================================================================
@@ -77,8 +78,14 @@ function buildBarrels(R) {
       if (tipped) { b.q.setFromEuler(new THREE.Euler(Math.PI / 2, R() * TAU, 0, 'YXZ')); b.pos.y = y + 0.3; }
       else { b.q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), R() * TAU); b.pos.y = y + 0.44; }
       b.col = addCircle(x, z, 0.33, y, y + 0.9);
+      b.col.dyn = true;
       BARRELS.push(b);
       writeBarrel(b);
+      if (PHYS.ready) {
+        // бочка — полноценное тело: катится, бьётся о стволы и стены, падает в воронки
+        b.phys = addBody({ shape: 'cyl', size: [0.3, 0.88], mass: 18, pos: b.pos, quat: b.q, keep: true, friction: 0.7, restitution: 0.25, rolling: 0.02, damp: [0.08, 0.25],
+          sync: (p, q) => { b.pos.copy(p); b.q.copy(q); b.col.x = p.x; b.col.z = p.z; b.col.y0 = p.y - 0.45; b.col.y1 = p.y + 0.45; writeBarrel(b); } });
+      }
     });
     return im;
   });
@@ -90,6 +97,7 @@ function writeBarrel(b) {
 }
 /** Импульс от взрыва: бочки ближе 9 м подбрасывает и закручивает. */
 export function blastBarrels(x, y, z, power) {
+  if (PHYS.ready) return;          // бочки получают импульс вместе со всеми телами (blastImpulse)
   for (const b of BARRELS) {
     const dx = b.pos.x - x, dy = b.pos.y - y, dz = b.pos.z - z, d = Math.hypot(dx, dy, dz);
     if (d > 9) continue;
@@ -100,6 +108,7 @@ export function blastBarrels(x, y, z, power) {
   }
 }
 export function updateBarrels(dt) {
+  if (PHYS.ready) return;
   for (const b of BARRELS) {
     if (b.rest > 1.5) continue;
     b.vel.y -= 9.8 * dt;

@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { rng, TAU } from '../core/math.js';
 import { terrainH } from './layout.js';
 import { M } from '../gen/materials.js';
+import { addPane } from '../fx/glass.js';
 import { place, box } from './builders.js';
 import { addBox } from '../core/colliders.js';
 
@@ -73,16 +74,20 @@ export function vehicle(type, x, z, rot, o = {}) {
   box(M.dark, ux, uy - T.clear + 0.35, uz, T.W - 0.2, 0.08, T.L - 0.4, { rot, rx: tiltX, rz: tiltZ });
   // окна: пустые проёмы (тёмные), кое-где остатки стекла
   for (const [z0, z1, y0, y1] of T.windows) for (const side of [-1, 1]) {
-    const glass = !burnt && R() < 0.25;
+    const glass = !burnt && R() < 0.7;
     const [wx, wy, wz] = W(side * (T.W / 2 + 0.005), (y0 + y1) / 2 - T.clear, (z0 + z1) / 2);
-    box(glass ? M.glass : M.dark, wx, wy, wz, 0.02, y1 - y0, z1 - z0, { rot, rx: tiltX, rz: tiltZ, tile: 1 });
+    // салон за стеклом тёмный; целое стекло — отдельный бьющийся инстанс
+    box(M.dark, wx - side * Math.cos(rot) * 0.03, wy, wz + side * Math.sin(rot) * 0.03, 0.02, y1 - y0, z1 - z0, { rot, rx: tiltX, rz: tiltZ, tile: 1 });
+    if (glass) addPane(wx + side * Math.cos(rot) * 0.01, wy, wz - side * Math.sin(rot) * 0.01, [tiltX, rot + Math.PI / 2, tiltZ], z1 - z0 - 0.04, y1 - y0 - 0.04);
   }
   for (const key of ['shield', 'rear']) {
     const sh = T[key];
     if (!sh) continue;
     const [z0, y0, z1, y1] = sh, len = Math.hypot(z1 - z0, y1 - y0), ang = Math.atan2(z1 - z0, y1 - y0);
     const [wx, wy, wz] = W(0, (y0 + y1) / 2 - T.clear, (z0 + z1) / 2 + (key === 'shield' ? -0.02 : 0.02));
-    box(!burnt && R() < 0.4 ? M.glass : M.dark, wx, wy, wz, T.W - 0.3, len, 0.02, { rot, rx: tiltX + ang, rz: tiltZ, tile: 1 });
+    const intact = !burnt && R() < 0.65;
+    box(M.dark, wx, wy, wz, T.W - 0.3, len, 0.02, { rot, rx: tiltX + ang, rz: tiltZ, tile: 1 });
+    if (intact) { const off = key === 'shield' ? -0.03 : 0.03; addPane(wx + Math.sin(rot) * off, wy + 0.01, wz + Math.cos(rot) * off, [tiltX + ang, rot, tiltZ], T.W - 0.36, len - 0.04); }
   }
   // фары и бампер
   const [bx, by, bz] = W(0, 0.45 - T.clear + 0.15, -T.L / 2 - 0.06);

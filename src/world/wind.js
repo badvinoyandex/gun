@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { clamp } from '../core/math.js';
+import { FXU, FXU_GLSL } from '../core/fxu.js';
 
 /* ============================================================================
    ВЕТЕР И УДАРНАЯ ВОЛНА
@@ -48,11 +49,19 @@ export function injectWind(mat, o = {}) {
   const refH = (o.refH ?? 10).toFixed(3), flutter = (o.flutter ?? 0.02).toFixed(4);
   const blast = (o.blast ?? 1).toFixed(3);
   const trample = !!o.trample;
+  const burn = !!o.burn;
   const prev = mat.onBeforeCompile;
   mat.onBeforeCompile = (sh, r) => {
     if (prev) prev(sh, r);
     Object.assign(sh.uniforms, windUniforms);
-    sh.vertexShader = WIND_GLSL + sh.vertexShader.replace('#include <begin_vertex>', /* glsl */`
+    if (burn) {
+      // гарь: растение оседает и чернеет, в огне — светится
+      Object.assign(sh.uniforms, FXU);
+      sh.fragmentShader = FXU_GLSL + 'varying vec2 vBurn;\n' + sh.fragmentShader
+        .replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.035, 0.03, 0.025), clamp(vBurn.x * 1.2, 0.0, 1.0));')
+        .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance = totalEmissiveRadiance * (1.0 - vBurn.x) + vec3(1.0, 0.36, 0.06) * vBurn.y * (0.7 + 0.3 * sin(uFxT * 11.0 + vBurn.y * 20.0)) * 1.6;');
+    }
+    sh.vertexShader = WIND_GLSL + (burn ? FXU_GLSL + 'varying vec2 vBurn;\n' : '') + sh.vertexShader.replace('#include <begin_vertex>', /* glsl */`
       #include <begin_vertex>
       {
         #ifdef USE_INSTANCING
@@ -61,6 +70,7 @@ export function injectWind(mat, o = {}) {
           mat4 mw = modelMatrix;
         #endif
         vec3 root = (mw * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+        ${burn ? `vec4 bm = burnAt(root.xz); vBurn = vec2(bm.a, bm.g); transformed.y *= 1.0 - bm.a * 0.88;` : ''}
         vec3 wp = (mw * vec4(transformed, 1.0)).xyz;
         float hh = max(wp.y - root.y, 0.0);
         float k = pow(hh / ${refH}, ${stiff});
@@ -92,6 +102,6 @@ export function injectWind(mat, o = {}) {
     `);
   };
   const key = mat.customProgramCacheKey();
-  mat.customProgramCacheKey = () => key + '|wind' + amp + stiff + refH + flutter + trample + blast;
+  mat.customProgramCacheKey = () => key + '|wind' + amp + stiff + refH + flutter + trample + blast + burn;
   return mat;
 }

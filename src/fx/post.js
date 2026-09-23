@@ -11,10 +11,10 @@ import { lerp } from '../core/math.js';
 /* Пост-обработка: блум (ночью сильнее — фонари «дышат» в тумане), цветокор
    с ночным сдвигом в холодное и потерей насыщенности, виньетка, зерно. */
 const Grade = {
-  uniforms: { tDiffuse: { value: null }, uNight: { value: 0 }, uSat: { value: 1.05 }, uVig: { value: 0.25 }, uT: { value: 0 }, uHit: { value: 0 }, uWarm: { value: 0 } },
+  uniforms: { tDiffuse: { value: null }, uFlash: { value: 0 }, uNight: { value: 0 }, uSat: { value: 1.05 }, uVig: { value: 0.25 }, uT: { value: 0 }, uHit: { value: 0 }, uWarm: { value: 0 } },
   vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
   fragmentShader: `
-    uniform sampler2D tDiffuse; uniform float uNight, uSat, uVig, uT, uHit, uWarm; varying vec2 vUv;
+    uniform sampler2D tDiffuse; uniform float uNight, uSat, uVig, uT, uHit, uWarm, uFlash; varying vec2 vUv;
     float h(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
     void main(){
       vec4 c = texture2D(tDiffuse, vUv);
@@ -31,6 +31,8 @@ const Grade = {
       c.rgb += (h(vUv * 1000.0 + uT) - 0.5) * (0.018 + uNight * 0.02);
       // контузия: красный край и смаз
       c.rgb = mix(c.rgb, c.rgb * vec3(1.2, 0.55, 0.5), uHit * smoothstep(0.1, 0.7, length(d) * 1.4));
+      // вспышка молнии: холодный засвет кадра
+      c.rgb += vec3(0.5, 0.55, 0.7) * uFlash * 0.06 + c.rgb * uFlash * 0.25;
       gl_FragColor = c;
     }`
 };
@@ -48,7 +50,8 @@ export function buildPost() {
   smaa.enabled = Q.smaa;
   composer.addPass(smaa);
 }
-export function updatePost(sky, hit) {
+export function updatePost(sky, hit, flash = 0) {
+  grade.uniforms.uFlash.value = flash;
   grade.uniforms.uNight.value = sky.night;
   grade.uniforms.uSat.value = lerp(1.06, 0.88, sky.night);
   grade.uniforms.uVig.value = lerp(0.22, 0.42, sky.night);

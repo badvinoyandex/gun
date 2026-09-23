@@ -28,7 +28,7 @@ export const PL = {
   pos: new THREE.Vector3(), vel: new THREE.Vector3(), yaw: 0, pitch: -0.2, roll: 0,
   speed: 12, onGround: false, crouch: 0, eye: 1.68, bob: 0, bobAmp: 0, step: 0,
   dead: 0, deathMsg: '', light: false, swim: false, agl: 0, jumpLock: false,
-  cine: null, lastDrop: -9
+  cine: null, lastDrop: -9, burn: 0
 };
 export const keys = {};
 const SENS = 0.0021;
@@ -69,7 +69,7 @@ function die(msg, kind, at) {
   PL.dead = 3.2; PL.deathMsg = msg;
   if (kind === 'mine') click();
   const x = at?.x ?? PL.pos.x, z = at?.z ?? PL.pos.z;
-  setTimeout(() => explode(x, terrainH(x, z), z, at?.type || 'pmn'), kind === 'mine' ? 180 : 0);
+  if (kind === 'mine') setTimeout(() => explode(x, terrainH(x, z), z, at?.type || 'pmn'), 180);
 }
 function checkMines() {
   const { x, z } = PL.pos;
@@ -82,6 +82,29 @@ function checkMines() {
   m.live = false;
   if (m.mesh) m.mesh.visible = false;
   die(PL.mode === 'drone' ? 'ДРОН ЗАЦЕПИЛ РАСТЯЖКУ' : 'ПОДРЫВ НА МИНЕ', 'mine', m);
+}
+
+/** Огонь под ногами: жжёт, через пару секунд в пламени — гибель. */
+export function burnPlayer(dt, heat) {
+  if (PL.mode !== 'walk' || PL.dead > 0 || PL.swim) { PL.burn = Math.max(0, PL.burn - dt); return; }
+  if (heat > 0.3) PL.burn += dt * heat * 1.6; else PL.burn = Math.max(0, PL.burn - dt * 0.8);
+  if (PL.burn > 2.4) { PL.burn = 0; die('СГОРЕЛ В ПОЖАРЕ', 'fire'); }
+}
+/** Ударная волна по игроку: отброс, а вплотную — гибель. */
+export function blastKnock(x, y, z, size) {
+  if (PL.dead > 0 || PL.cine) return;
+  const dx = PL.pos.x - x, dy = PL.pos.y + 0.9 - y, dz = PL.pos.z - z, d = Math.hypot(dx, dy, dz);
+  if (PL.mode === 'walk') {
+    if (d < 1.9 * size) { die('ПОГИБ ОТ РАЗРЫВА', 'blast'); return; }
+    if (d < 12 * size) {
+      const k = 9 * size / (1 + d * 0.9);
+      PL.vel.x += dx / d * k; PL.vel.z += dz / d * k; PL.vel.y += k * 0.35; PL.onGround = false;
+    }
+  } else if (d < 9 * size) {
+    const k = 14 * size / (1 + d);
+    PL.vel.x += dx / d * k; PL.vel.y += dy / d * k; PL.vel.z += dz / d * k;
+    if (d < 1.6 * size) die('ДРОН УНИЧТОЖЕН ВЗРЫВОМ', 'blast');
+  }
 }
 
 /* ---------- Сброс гранаты с дрона / бросок пешком ---------- */

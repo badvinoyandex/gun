@@ -5,6 +5,7 @@ import { clamp, lerp, smoothstep, DEG, srnd, TAU } from '../core/math.js';
 import { cv, tex, blob } from '../gen/canvas.js';
 import { WIND } from './wind.js';
 import { hFast } from './heightcache.js';
+import { WEATHER } from './weather.js';
 
 /* ============================================================================
    СУТКИ: утро → день → закат → сумерки → ночь → рассвет
@@ -90,7 +91,7 @@ function buildStars() {
   const m = new THREE.ShaderMaterial({
     uniforms: { uO: { value: 0 }, uT: { value: 0 } }, transparent: true, depthWrite: false, fog: false, blending: THREE.AdditiveBlending,
     vertexShader: `attribute float aMag; uniform float uT; varying float vA;
-      void main(){ vec4 p = modelViewMatrix * vec4(position * 1800.0, 1.0); gl_Position = projectionMatrix * p;
+      void main(){ vec4 p = modelViewMatrix * vec4(position * 1300.0, 1.0); gl_Position = projectionMatrix * p;
         float tw = 0.75 + 0.25 * sin(uT * (2.0 + aMag * 5.0) + position.x * 400.0);
         vA = (0.25 + aMag * 0.9) * tw * smoothstep(0.0, 0.15, position.y); gl_PointSize = 1.2 + aMag * 2.2; }`,
     fragmentShader: `uniform float uO; varying float vA; void main(){ vec2 d = gl_PointCoord - 0.5; float a = smoothstep(0.5, 0.0, length(d)) * vA * uO; gl_FragColor = vec4(vec3(0.85, 0.9, 1.0) * a, a); }`
@@ -119,19 +120,19 @@ function buildMoon() {
   scene.add(sunMesh);
 }
 function buildClouds() {
-  const g = new THREE.SphereGeometry(1500, 48, 16, 0, TAU, 0, Math.PI * 0.5);
+  const g = new THREE.SphereGeometry(1250, 48, 16, 0, TAU, 0, Math.PI * 0.5);   // внутри дальней плоскости камеры (1400), иначе в центре кадра «дыра»
   const m = new THREE.ShaderMaterial({
     side: THREE.BackSide, transparent: true, depthWrite: false, fog: false,
-    uniforms: { uT: { value: 0 }, uSun: { value: new THREE.Vector3() }, uLit: { value: new THREE.Color() }, uShade: { value: new THREE.Color() }, uCover: { value: 0.45 }, uWind: { value: new THREE.Vector2() } },
+    uniforms: { uT: { value: 0 }, uSun: { value: new THREE.Vector3() }, uLit: { value: new THREE.Color() }, uShade: { value: new THREE.Color() }, uCover: { value: 0.45 }, uWind: { value: new THREE.Vector2() }, uDense: { value: 0 } },
     vertexShader: `varying vec3 vP; void main(){ vP = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
     fragmentShader: `
-      uniform float uT, uCover; uniform vec3 uSun, uLit, uShade; uniform vec2 uWind; varying vec3 vP;
+      uniform float uT, uCover, uDense; uniform vec3 uSun, uLit, uShade; uniform vec2 uWind; varying vec3 vP;
       float h(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
       float n(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
         return mix(mix(h(i), h(i+vec2(1,0)), f.x), mix(h(i+vec2(0,1)), h(i+vec2(1,1)), f.x), f.y); }
       float fbm(vec2 p){ float s = 0.0, a = 0.5; for(int i = 0; i < 5; i++){ s += a * n(p); p *= 2.07; a *= 0.5; } return s; }
       void main(){
-        if (vP.y < 0.02) discard;
+        if (vP.y < 0.02 && uDense < 0.01) discard;
         vec2 uv = vP.xz / (vP.y + 0.12) * 1.6 + uWind * uT * 0.004;
         float d = fbm(uv) * 0.65 + fbm(uv * 3.1 + 7.0) * 0.35;
         float c = smoothstep(1.0 - uCover, 1.0 - uCover + 0.28, d);
@@ -140,6 +141,9 @@ function buildClouds() {
         float thick = smoothstep(0.4, 0.9, d);
         vec3 col = mix(uLit * (1.0 + sunFacing * 1.6), uShade, thick * 0.65);
         float a = c * smoothstep(0.02, 0.2, vP.y) * 0.92;
+        // сплошная облачность: пелена без просветов, низ темнее
+        a = max(a, uDense * smoothstep(-0.02, 0.12, vP.y));
+        col = mix(col, uShade * (0.9 + d * 0.5), uDense * (1.0 - c) * 0.8);
         gl_FragColor = vec4(col, a);
       }`
   });
@@ -148,7 +152,7 @@ function buildClouds() {
   scene.add(clouds);
 }
 
-const _d = new THREE.Vector3(), _m = new THREE.Vector3(), _tgt = new THREE.Vector3();
+const _d = new THREE.Vector3(), _m = new THREE.Vector3(), _tgt = new THREE.Vector3(), _grey = new THREE.Color();
 export function updateSky(dt) {
   if (!TIME.paused) TIME.h = (TIME.h + dt * TIME.speed) % 24;
   const k = keysAt(TIME.h);
@@ -170,8 +174,11 @@ export function updateSky(dt) {
   SKY.moonUp = moonUp;
   const useSun = _d.y > -0.02;
   const L = useSun ? _d : _m;
-  const I = useSun ? k.sunI * sunUp : 0.36 * moonUp;
+  // облачность гасит прямой свет: в грозу солнце почти не пробивается
+  const ov = WEATHER.ov, fl = WEATHER.flash;
+  const I = (useSun ? k.sunI * sunUp : 0.36 * moonUp) * (1 - 0.84 * ov);
   dir.color.setRGB(...(useSun ? k.sun : [0.55, 0.65, 0.9]));
+  dir.color.lerp(_grey.setRGB(0.8, 0.84, 0.9), ov * 0.6);
   dir.intensity = I;
   SKY.sunColor.copy(dir.color); SKY.sunI = useSun ? I : 0;
   // тень едет за камерой; с высоты дрона — шире (иначе лес под ним без теней)
@@ -189,33 +196,47 @@ export function updateSky(dt) {
   dir.position.copy(_tgt).addScaledVector(L, 200);
   dir.target.updateMatrixWorld();
 
-  hemi.color.setRGB(...k.hs); hemi.groundColor.setRGB(...k.hg); hemi.intensity = k.hI;
-  amb.intensity = 0.1 + night * 0.06;
+  hemi.color.setRGB(...k.hs); hemi.groundColor.setRGB(...k.hg);
+  // пасмурно: рассеянный свет серее и чуть ярче относительно прямого, вспышка молнии — на весь лес
+  const lum = (k.hs[0] + k.hs[1] + k.hs[2]) / 3;
+  hemi.color.lerp(_grey.setRGB(lum * 0.95, lum, lum * 1.08), ov * 0.75);
+  hemi.intensity = k.hI * (1 - 0.18 * ov) + fl * 1.1;
+  hemi.color.lerp(_grey.setRGB(0.75, 0.8, 1.0), Math.min(1, fl));
+  amb.intensity = 0.1 + night * 0.06 + fl * 0.3;
   scene.fog.color.setRGB(...k.fog);
+  const fogLum = (k.fog[0] + k.fog[1] + k.fog[2]) / 3;
+  // грозовая пелена темнее и холоднее
+  const dark = 1 - 0.45 * WEATHER.storm - 0.15 * WEATHER.rain;
+  scene.fog.color.lerp(_grey.setRGB(fogLum * 0.82 * dark, fogLum * 0.86 * dark, fogLum * 0.94 * dark), ov * 0.85);
+  scene.fog.color.lerp(_grey.setRGB(0.42, 0.46, 0.56), Math.min(0.6, fl * 0.45));
   SKY.fogColor.copy(scene.fog.color);
-  // с высоты видно дальше: туман в лесу гуще, чем над кронами
-  scene.fog.density = k.fogD * lerp(1, 0.22, smoothstep(8, 90, agl));
-  renderer.toneMappingExposure = k.exp;
+  // с высоты видно дальше: туман в лесу гуще, чем над кронами; в дождь — пелена
+  scene.fog.density = k.fogD * lerp(1, 0.22, smoothstep(8, 90, agl)) * (1 + WEATHER.fogK * 2.4);
+  renderer.toneMappingExposure = k.exp * (1 + 0.12 * ov);
 
   // светила
   sunMesh.position.copy(camera.position).addScaledVector(_d, 1300);
   sunMesh.lookAt(camera.position);
-  sunMesh.material.opacity = clamp(smoothstep(-0.08, 0.05, _d.y), 0, 1) * 0.55;
+  sunMesh.material.opacity = clamp(smoothstep(-0.08, 0.05, _d.y), 0, 1) * 0.55 * (1 - ov);
   sunMesh.material.color.setRGB(k.sun[0], k.sun[1], k.sun[2]);
   moonMesh.position.copy(camera.position).addScaledVector(_m, 1300);
   moonMesh.lookAt(camera.position);
-  moonMesh.material.opacity = clamp(smoothstep(-0.05, 0.1, _m.y), 0, 1) * (0.25 + night * 0.75);
+  moonMesh.material.opacity = clamp(smoothstep(-0.05, 0.1, _m.y), 0, 1) * (0.25 + night * 0.75) * (1 - ov * 0.92);
   stars.position.copy(camera.position);
-  stars.material.uniforms.uO.value = night * night;
+  stars.material.uniforms.uO.value = night * night * (1 - ov);
   stars.material.uniforms.uT.value = FRAME.t;
   clouds.position.copy(camera.position); clouds.position.y -= 60;
   const cu = clouds.material.uniforms;
   cu.uT.value = FRAME.t; cu.uSun.value.copy(_d); cu.uWind.value.copy(WIND.dir);
   const lit = new THREE.Color(k.sun[0], k.sun[1], k.sun[2]).multiplyScalar(lerp(1.0, 0.05, night) * (0.35 + sunUp * 0.9));
   lit.lerp(new THREE.Color(k.fog[0], k.fog[1], k.fog[2]), 0.45);
+  lit.lerp(_grey.setRGB(fogLum * 0.9 * dark, fogLum * 0.92 * dark, fogLum * dark), ov * 0.8);
+  lit.lerp(_grey.setRGB(0.8, 0.85, 1.0), Math.min(0.7, fl * 0.5));
   cu.uLit.value.copy(lit);
-  cu.uShade.value.setRGB(k.fog[0] * 0.55, k.fog[1] * 0.55, k.fog[2] * 0.6);
-  cu.uCover.value = 0.42 + 0.08 * Math.sin(FRAME.t * 0.01);
+  cu.uShade.value.setRGB(k.fog[0] * 0.55, k.fog[1] * 0.55, k.fog[2] * 0.6).multiplyScalar((1 - ov * 0.45) * dark).addScalar(fl * 0.15);
+  cu.uCover.value = 0.42 + 0.08 * Math.sin(FRAME.t * 0.01) + ov * 0.56;
+  cu.uDense.value = smoothstep(0.55, 0.95, ov);
+  u.turbidity.value = k.turb + ov * 9; u.rayleigh.value = k.ray * (1 - ov * 0.6);
   return k;
 }
 export function fmtTime(h) {

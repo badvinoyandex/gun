@@ -10,6 +10,8 @@ import { boom, tinnitus } from './audio.js';
 import { blastBarrels } from '../world/props.js';
 import { nudgeCloth } from '../world/cloth.js';
 import { addRipple } from '../world/lake.js';
+import { onBlast } from './destruction.js';
+import { blastKnock } from '../game/player.js';
 
 /* ============================================================================
    ВЗРЫВЫ: мины, сброс с дрона
@@ -52,7 +54,7 @@ function crater(x, z, r) {
 
 /** kind: 'pmn' (противопехотная), 'tm' (противотанковая), 'ozm', 'vog' (сброс с дрона). */
 export function explode(x, y, z, kind = 'pmn') {
-  const size = kind === 'tm' ? 2.2 : kind === 'ozm' ? 1.3 : kind === 'vog' ? 0.8 : 1;
+  const size = kind === 'tm' ? 2.2 : kind === 'shell' ? 1.8 : kind === 'ozm' ? 1.3 : kind === 'vog' ? 0.8 : 1;
   const water = lakeRho(x, z) < 0.98 && y < MAP.WATER_Y + 0.6;
   const gy = water ? MAP.WATER_Y : terrainH(x, z);
   BLAST.last = { x, y: gy, z, t: FRAME.t, size };
@@ -80,6 +82,7 @@ export function explode(x, y, z, kind = 'pmn') {
         size: sr(0.5, 1.2), grow: 1.5, life: sr(1.2, 2.2), col: [0.72, 0.76, 0.78], a: 0.6, grav: 9.8, drag: 0.4, floor: gy });
     }
     addRipple(x, z, 1.2 * size);
+    onBlast(x, gy, z, size, true);
   } else {
     // столб земли: тёмные клочья, падающие обратно
     for (let i = 0; i < 46 * size; i++) {
@@ -94,8 +97,10 @@ export function explode(x, y, z, kind = 'pmn') {
       BLAST.chunks.push({ p: new THREE.Vector3(x, gy + 0.2, z), v: new THREE.Vector3(Math.cos(a) * Math.cos(e) * sp, Math.sin(e) * sp, Math.sin(a) * Math.cos(e) * sp), life: sr(2.5, 4.5), s: sr(0.6, 1.6), r: new THREE.Euler(srnd() * 6, srnd() * 6, 0) });
     }
     if (BLAST.chunks.length > 220) BLAST.chunks.splice(0, BLAST.chunks.length - 220);
+    onBlast(x, gy, z, size, false);
     crater(x, z, 1.4 * size);
   }
+  blastKnock(x, gy, z, size);
   // дым: медленно поднимается и сносится ветром
   for (let i = 0; i < 14 * size; i++) {
     FX.alpha.spawn({ x: x + sr(-1, 1), y: gy + sr(0.3, 2.5), z: z + sr(-1, 1), vx: sr(-0.8, 0.8), vy: sr(0.6, 2.2), vz: sr(-0.8, 0.8),
