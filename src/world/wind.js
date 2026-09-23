@@ -105,3 +105,52 @@ export function injectWind(mat, o = {}) {
   mat.customProgramCacheKey = () => key + '|wind' + amp + stiff + refH + flutter + trample + blast + burn;
   return mat;
 }
+
+/** Врезка для построек и реквизита: обугливание и тлеющие угли по карте uChar,
+    лёгкая дрожь от ударной волны (дом «вздрагивает», когда проходит фронт). */
+export function injectStructFX(mat) {
+  const prev = mat.onBeforeCompile;
+  mat.onBeforeCompile = (sh, r) => {
+    if (prev) prev(sh, r);
+    Object.assign(sh.uniforms, windUniforms, FXU);
+    sh.vertexShader = (sh.vertexShader.includes('uniform vec4 uBlast') ? '' : WIND_GLSL) + 'varying vec3 vSW;\n' + sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
+      {
+        #ifdef USE_INSTANCING
+          vec4 sw = modelMatrix * instanceMatrix * vec4(transformed, 1.0);
+        #else
+          vec4 sw = modelMatrix * vec4(transformed, 1.0);
+        #endif
+        vSW = sw.xyz;
+        vec2 bd = sw.xz - uBlast.xz; float bdist = length(bd);
+        float tau = uBlast.w - bdist / 340.0;
+        if (tau > 0.0 && tau < 0.8 && uBlastStr > 0.0) {
+          float push = exp(-tau * 7.0) * sin(tau * 60.0) * uBlastStr * exp(-bdist / 9.0) * 0.035;
+          vec3 d = vec3(bdist > 0.01 ? bd / bdist : vec2(1.0, 0.0), 0.0).xzy;
+          #ifdef USE_INSTANCING
+            transformed += inverse(mat3(modelMatrix * instanceMatrix)) * d * push;
+          #else
+            transformed += inverse(mat3(modelMatrix)) * d * push;
+          #endif
+        }
+      }`);
+    sh.fragmentShader = (sh.fragmentShader.includes('uniform sampler2D uBurn') ? 'varying vec3 vSW;\n' : FXU_GLSL + 'varying vec3 vSW;\n') + sh.fragmentShader
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        vec4 chS = charAt(vSW.xz);
+        float chn = 0.5 + 0.5 * sin(vSW.x * 3.7 + vSW.z * 2.9 + vSW.y * 5.1) * sin(vSW.x * 1.3 - vSW.y * 2.2 + vSW.z * 4.4);
+        float chK = smoothstep(0.02, 0.55, chS.r + (chn - 0.5) * 0.3 * chS.r);
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.025, 0.022, 0.02) * (0.6 + chn * 0.8), chK * 0.96);`)
+      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+        {
+          // тлеющие трещины: тонкие прожилки по обугленному, мерцают
+          float fl = 0.65 + 0.35 * sin(uFxT * 7.0 + vSW.x * 3.1 + vSW.z * 2.3);
+          float cr = abs(sin(vSW.x * 6.3 + vSW.y * 9.1 + sin(vSW.z * 4.7) * 2.0) * sin(vSW.z * 5.9 - vSW.y * 7.7 + sin(vSW.x * 3.3) * 2.0));
+          cr = smoothstep(0.975, 1.0, 1.0 - cr);
+          float g = chS.g * chS.g * smoothstep(0.45, 0.95, chS.r);
+          totalEmissiveRadiance += vec3(1.0, 0.3, 0.05) * g * (0.03 + cr * 0.55) * fl;
+        }`);
+  };
+  const key = mat.customProgramCacheKey();
+  mat.customProgramCacheKey = () => key + '|sfx';
+  return mat;
+}
+

@@ -24,7 +24,7 @@ const N = BURN.N;
 const fuel = new Float32Array(N * N), fuel0 = new Float32Array(N * N), heat = new Float32Array(N * N);
 const state = new Uint8Array(N * N);          // 0 — цело, 1 — горит, 2 — выгорело
 let active = [];
-export const FIRE = { cells: 0, trees: [], brands: [], lights: [], near: 0 };
+export const FIRE = { cells: 0, trees: [], brands: [], lights: [], near: 0, structs: [] };
 const MAXC = () => Math.round(500 + 900 * Q.tex);
 
 export function buildFire() {
@@ -187,6 +187,8 @@ export function updateFire(dt) {
     if (Math.random() < 0.12) FX.alpha.spawn({ x: b.pos.x, y: b.pos.y + 0.4, z: b.pos.z, vx: 0, vy: 0.8, vz: 0, size: 0.4, grow: 0.7, life: 3, col: [0.22, 0.21, 0.2], a: 0.25, windK: 1.2 });
     // лежит на земле — поджигает траву под собой
     if (g.age > 0.6 && b.pos.y - hFast(b.pos.x, b.pos.z) < 0.4 && Math.random() < dt * 2.5) ignite(b.pos.x, b.pos.z, 0, 1);
+    if (g.age > 0.6 && Math.random() < dt * 0.4 && FIRE.onBrand) FIRE.onBrand(b.pos);
+    if (b.wet) { FIRE.brands.splice(i, 1); continue; }
   }
   // свет: несколько точечных источников на самых близких очагах, с мерцанием
   lightT -= dt;
@@ -196,6 +198,7 @@ export function updateFire(dt) {
     for (const k of near) cand.push([BURN.X0 + (k % N) + 0.5, BURN.X0 + ((k / N) | 0) + 0.5, heat[k]]);
     for (const f of FIRE.trees) cand.push([f.x, f.z, 3, (f.y0 + f.y1) / 2]);
     for (const g of FIRE.brands) if (g.b.body) cand.push([g.b.pos.x, g.b.pos.z, 0.6, g.b.pos.y + 0.3]);
+    for (const f of FIRE.structs) cand.push([f.x, f.z, f.p, f.y]);
     cand.sort((a, b) => ((a[0] - cp.x) ** 2 + (a[1] - cp.z) ** 2) - ((b[0] - cp.x) ** 2 + (b[1] - cp.z) ** 2));
     const picked = [];
     for (const c of cand) {

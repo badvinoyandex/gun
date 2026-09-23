@@ -89,7 +89,7 @@ export function buildGrass() {
   M.blades.emissive = new THREE.Color(0x0a1206);
   injectWind(M.blades, { amp: 0.14, stiff: 1.5, refH: 0.6, flutter: 0.05, trample: true, blast: 1.5, burn: true });
   TUFTS.R = Math.round(9 + 7 * Q.tex);
-  const n = Math.round(Q.grass * 0.28);
+  const n = Q.tufts === false ? 1 : Math.round(Q.grass * 0.28);
   const tim = new THREE.InstancedMesh(tuftGeo(), M.blades, n);
   tim.count = 0; tim.frustumCulled = false; tim.receiveShadow = true; tim.castShadow = Q.tex > 0.9;
   tim.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -135,7 +135,7 @@ export function refreshGrass(force) {
   const agl = camera.position.y - hFast(cx, cz);
   // с высоты дрона трава не видна — не тратим на неё кадр
   if (agl > 55) { if (im.count) { im.count = 0; TUFTS.im.count = 0; } GRASS.center.set(1e9, 1e9); TUFTS.center.set(1e9, 1e9); return; }
-  if (agl < 25) refreshTufts(force, cx, cz); else TUFTS.im.count = 0;
+  if (agl < 25 && Q.tufts !== false) refreshTufts(force, cx, cz); else TUFTS.im.count = 0;
   const R = Q.grassR;
   if (!force && GRASS.center.distanceTo(new THREE.Vector2(cx, cz)) < R * 0.22) return;
   GRASS.center.set(cx, cz);
@@ -150,7 +150,7 @@ export function refreshGrass(force) {
     const dx = x - cx, dz = z - cz, d2 = dx * dx + dz * dz;
     if (d2 > R * R) continue;
     // вблизи основную массу дают травинки — карточек меньше
-    if (d2 < RN * RN && h1 < 0.55) continue;
+    if (Q.tufts !== false && d2 < RN * RN && h1 < 0.55) continue;
     const fade = 1 - d2 / (R * R);
     const dens = grassDensity(x, z);
     if (h3 > dens * (0.35 + fade * 0.75)) continue;

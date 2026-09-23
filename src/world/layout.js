@@ -87,23 +87,48 @@ export const RING_ROAD = addPath(RING, 4.0, 'road', { closed: true, lit: true, n
 
 export const CLUSTERS = {
   T: { x: -50, z: -50, name: 'Турбаза «Лесное»' },
-  K: { x: 50, z: 50, name: 'Лесной кордон' }
+  K: { x: 62, z: 62, name: 'Пионерлагерь «Волчонок»' }
 };
+/* Пионерлагерь «Волчонок» на юго-восточном конце озера — вместо кордона.
+   Локальные оси лагеря: r — вправо (если стоять лицом к озеру), f — к озеру.
+   Территория r ∈ [−22, 22], f ∈ [−20, 16], ворота — посередине передней стороны. */
+export const CAMP = { x: 62, z: 62, r0: -22, r1: 22, f0: -20, f1: 16 };
+export const campXZ = (r, f) => [CAMP.x + (r - f) * S2, CAMP.z + (-r - f) * S2];
+/** Поворот постройки, фасад которой смотрит вдоль локального направления (dr, df). */
+export const campRot = (dr, df) => { const [x0, z0] = campXZ(0, 0), [x1, z1] = campXZ(dr, df); return Math.atan2(x1 - x0, z1 - z0); };
+export const inCamp = (x, z, pad = 0) => {
+  const dx = x - CAMP.x, dz = z - CAMP.z, r = (dx - dz) * S2, f = (-dx - dz) * S2;
+  return r > CAMP.r0 - pad && r < CAMP.r1 + pad && f > CAMP.f0 - pad && f < CAMP.f1 + pad;
+};
+const C = campXZ;
 
-// Дорога от кольца через турбазу на север — в минное поле (разбитый блокпост).
-addSym([[-33.5, -33.5], [-42, -41], [-50, -50], [-56, -66], [-61, -88], [-63, -108], [-64, -140]],
-  3.8, 'road', { lit: false, name: 'старая дорога' });
+// Турбаза: дорога от кольца через неё на север — в минное поле (разбитый блокпост).
+addPath([[-33.5, -33.5], [-42, -41], [-50, -50], [-56, -66], [-61, -88], [-63, -108], [-64, -140]], 3.8, 'road', { lit: false, name: 'старая дорога' });
+// Лагерь: дорога от кольца к воротам, дальше вдоль забора снаружи — к тому же разбитому блокпосту.
+addPath([[33.5, 33.5], [42, 41], C(0, 20.5), C(-13, 22), C(-26.5, 17), C(-26.5, -20), C(-20, -27), [63, 108], [64, 140]], 3.8, 'road', { lit: false, name: 'дорога к лагерю' });
 // Внутренние дорожки турбазы — с фонарями и лавочками.
-addSym([[-50, -50], [-57, -51], [-63, -49], [-68.5, -45]], 1.9, 'trail', { lit: true, name: 'аллея турбазы' });
-addSym([[-57, -51], [-61, -55.5], [-63.8, -57.6]], 1.7, 'trail', { lit: true, name: 'к корпусу' });
-addSym([[-50, -50], [-48, -62], [-46.4, -71]], 1.7, 'trail', { lit: true, name: 'к домику' });
-addSym([[-17.5, -40.4], [-17, -37.4]], 1.6, 'trail', { lit: true, name: 'к бане' });
+addPath([[-50, -50], [-57, -51], [-63, -49], [-68.5, -45]], 1.9, 'trail', { lit: true, name: 'аллея турбазы' });
+addPath([[-57, -51], [-61, -55.5], [-63.8, -57.6]], 1.7, 'trail', { lit: true, name: 'к корпусу' });
+addPath([[-50, -50], [-48, -62], [-46.4, -71]], 1.7, 'trail', { lit: true, name: 'к домику' });
+addPath([[-17.5, -40.4], [-17, -37.4]], 1.6, 'trail', { lit: true, name: 'к бане' });
+// Дорожки лагеря: центральная аллея, линейка, боковые аллеи к корпусам, к столовой, умывальнику, туалетам.
+// Фонари на них мерцают бледно-жёлтым.
+addPath([C(0, 18), C(0, 7)], 2.6, 'trail', { lit: true, camp: true, name: 'аллея лагеря' });
+addPath([C(0, 6), C(0, -3)], 8, 'trail', { lit: false, camp: true, name: 'линейка' });
+addPath([C(0, -3), C(0, -8.2)], 2.4, 'trail', { lit: true, camp: true, name: 'к столовой' });
+addPath([C(-10, 2), C(10, 2)], 2, 'trail', { lit: false, camp: true, name: 'поперечная аллея' });
+addPath([C(-10, 13), C(-10, -12), C(-12, -15.6)], 1.8, 'trail', { lit: true, camp: true, name: 'левая аллея' });
+addPath([C(10, 13), C(10, -12), C(13.5, -15.2)], 1.8, 'trail', { lit: true, camp: true, name: 'правая аллея' });
+addPath([C(-10, -12), C(-16.5, -14.6)], 1.3, 'trail', { lit: false, camp: true, name: 'к туалетам' });
+addPath([C(-10, 4), C(-17, 4.3), C(-24, 4)], 1.4, 'trail', { lit: false, camp: true, name: 'к калитке' });
 addSym([[-39.5, -39.5], [-34, -31.5], [-30.6, -30.6]], 1.8, 'trail', { lit: true, name: 'к пирсу' });
 
 // Тропы от баз. Три линии: левый фланг, центр, правый фланг.
 addSym([[-84, 84], [-92, 58], [-90, 28], [-82, 0], [-72, -24], [-60, -40], [-50, -50]], 2.2, 'trail', { name: 'западная тропа' });
 addSym([[-84, 84], [-70, 70], [-56, 56], [-42, 42], [-26, 26]], 2.4, 'trail', { name: 'центральная тропа' });
-addSym([[-84, 84], [-58, 94], [-30, 96], [-2, 90], [22, 80], [40, 66], [50, 50]], 2.2, 'trail', { name: 'южная тропа' });
+addPath([[84, -84], [58, -94], [30, -96], [2, -90], [-22, -80], [-40, -66], [-50, -50]], 2.2, 'trail', { name: 'южная тропа*' });
+// у лагеря тропа выходит к калитке в заборе
+addPath([[-84, 84], [-58, 94], [-30, 96], [-2, 90], [22, 80], [34, 79], C(-24, 4)], 2.2, 'trail', { name: 'южная тропа' });
 // Поперечные связки между линиями.
 addSym([[-82, 0], [-62, -2], [-41, -7]], 1.8, 'trail', { name: 'связка З' });
 addSym([[-2, 90], [2, 66], [6.5, 41]], 1.8, 'trail', { name: 'связка Ю' });
@@ -219,10 +244,27 @@ function arc(cx, cz, r, a0, a1, step, amp) {
   trenchSym(zigzag(-40, 40, S2, S2, -15, 15, 1.2, 4), { name: 'окоп у кольцевой', depth: 1.5, bays: true });
   // Передовые ячейки на берегу.
   const a = lakeXZ(-9, -27), b = lakeXZ(0, -28.5), c = lakeXZ(9, -27);
-  trenchSym([a, b, c], { name: 'береговые ячейки', depth: 1.5 });
-  // Старая траншея у турбазы (обе стороны подходов) и у кордона.
-  trenchSym([[-85, -28], [-82, -33], [-83, -38], [-80, -43], [-81, -49]], { name: 'траншея турбазы З', depth: 1.5 });
-  trenchSym([[-52, -81], [-46, -84], [-40, -82], [-34, -85]], { name: 'траншея турбазы С', depth: 1.5 });
+  trenchSym([a, b, c], { name: 'береговые ячейки', depth: 1.6, lake: true });
+  // Старые траншеи у турбазы.
+  addTrench([[-85, -28], [-82, -33], [-83, -38], [-80, -43], [-81, -49]], { name: 'траншея турбазы З', depth: 1.5 });
+  addTrench([[-52, -81], [-46, -84], [-40, -82], [-34, -85]], { name: 'траншея турбазы С', depth: 1.5 });
+  // Лагерь: окопы за забором — с боков и у задних ворот, изломом.
+  const Cz = (pts) => pts.map(([r, f]) => campXZ(r, f));
+  addTrench(Cz([[26.5, 12], [28, 7], [26.5, 2], [28, -3], [26.5, -8], [28, -13]]), { name: 'окоп у лагеря В', depth: 1.6, bays: true });
+  addTrench(Cz([[-31, 12], [-32.5, 6], [-31, 0], [-32.5, -6], [-31, -12]]), { name: 'окоп у лагеря З', depth: 1.6, bays: true });
+  addTrench(Cz([[-6, -24.5], [0, -26], [6, -24.5], [12, -26], [18, -24.5]]), { name: 'окоп за лагерем', depth: 1.6, bays: true });
+  // Берег озера: ячейки и траншеи между водой и кольцевой, у обеих баз — кромка
+  // сырая, дно не ниже уровня воды (иначе окоп затопит), зато бруствер выше.
+  for (const [p0, p1, off] of [[3.62, 3.98, 6.2], [4.18, 4.5, 6.4], [4.95, 5.3, 6.4], [5.86, 6.1, 6.2]]) {
+    const pts = [];
+    for (let k = 0, n = 7; k <= n; k++) pts.push(lakeContour(p0 + (p1 - p0) * k / n, off + (k % 2 ? 0.9 : -0.9) * (k > 0 && k < n ? 1 : 0)));
+    trenchSym(pts, { name: 'береговая траншея', depth: 1.7, bays: true, lake: true });
+  }
+  // Ход сообщения: от правого крыла рубежа к берегу.
+  trenchSym([[-40.5, 70], [-36, 62], [-33, 55], [-29, 49]], { name: 'ход к берегу', depth: 1.6 });
+  // Секреты на фланге у минного поля и у связки Ю.
+  trenchSym(zigzag(-96, 8, 0.2, -0.98, -6, 6, 1.1, 4), { name: 'секрет у минного поля', depth: 1.6, bays: true });
+  trenchSym(zigzag(-12, 76, 0.94, 0.34, -7, 7, 1.1, 4.5), { name: 'окоп у связки Ю', depth: 1.6, bays: true });
 }
 // Концы: стык с другим окопом — открыт, иначе аппарель. Сторона противника — к центру карты.
 for (let i = 0; i < TRENCH_PLAN.length; i++) {
@@ -235,7 +277,7 @@ for (let i = 0; i < TRENCH_PLAN.length; i++) {
   const len = polyLength(pts);
   TRENCHES.push({
     pts, len, depth: opt.depth ?? 1.8, name: opt.name || '', open0: near(pts[0]) < 1.3, open1: near(pts[pts.length - 1]) < 1.3,
-    bays: !!opt.bays, dugout0: !!opt.dugout0, dugout1: !!opt.dugout1, nest1: !!opt.nest1
+    bays: !!opt.bays, dugout0: !!opt.dugout0, dugout1: !!opt.dugout1, nest1: !!opt.nest1, lake: !!opt.lake
   });
 }
 
@@ -289,7 +331,7 @@ export const CRATERS = [];
     if (lakeRho(x, z) < 1.25) continue;
     if (pathInfluence(x, z, 2) > 0 || trenchDist(x, z) < r + 2.5) continue;
     if (Math.hypot(x - SPAWNS.A.x, z - SPAWNS.A.z) < 22 || Math.hypot(x - SPAWNS.D.x, z - SPAWNS.D.z) < 22) continue;
-    if (Math.hypot(x - CLUSTERS.T.x, z - CLUSTERS.T.z) < 20 || Math.hypot(x - CLUSTERS.K.x, z - CLUSTERS.K.z) < 20) continue;
+    if (Math.hypot(x - CLUSTERS.T.x, z - CLUSTERS.T.z) < 20 || Math.hypot(-x - CLUSTERS.T.x, -z - CLUSTERS.T.z) < 20 || inCamp(x, z, 8) || inCamp(-x, -z, 8)) continue;
     CRATERS.push({ x, z, r }, { x: -x, z: -z, r });
   }
   // минная полоса обстреляна плотнее (тоже парами — рельеф у обеих баз одинаковый)
@@ -365,8 +407,12 @@ export function terrainH(x, z) {
     const tr = TRENCHES[_tq.seg.li];
     const s = _tq.s, taper = trenchTaper(tr, s);
     carve = (1 - smoothstep(TW.floor, TW.top, _tq.d)) * taper;
-    parapet = 0.42 * Math.exp(-Math.pow((_tq.d - 1.6) / 0.5, 2)) * (0.4 + 0.6 * taper);
-    h -= tr.depth * carve;
+    parapet = (tr.lake ? 0.75 : 0.42) * Math.exp(-Math.pow((_tq.d - 1.6) / 0.5, 2)) * (0.4 + 0.6 * taper);
+    // сырой берег: окоп в насыпи — грунт поднимается валом, дно остаётся выше воды
+    if (tr.lake) h += Math.max(0, MAP.WATER_Y + 1.75 - h) * (1 - smoothstep(1.3, 3.2, _tq.d)) * smoothstep(0, 2, Math.min(s, tr.len - s) + 1);
+    const cut = h - tr.depth * carve;
+    // у озера дно не опускается ниже воды: окоп сырой, но не затоплен
+    h = rho < 2.5 ? lerp(h, Math.max(cut, MAP.WATER_Y + 0.3), carve > 0 ? 1 : 0) : cut;
   }
   // Микрорельеф: кочки и корни — кроме троп и дна окопов.
   const pi = pathInfluence(x, z, 0, _pi);

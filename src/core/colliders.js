@@ -8,7 +8,10 @@ const GRID = new Map();
 export const COLLIDERS = [];
 const key = (ix, iz) => ix * 8192 + iz;
 
+/** Захват: коллайдеры, созданные при сборке разрушаемой постройки, привязываются к её панели. */
+export const CAPTURE = { list: null };
 function insert(c, minx, minz, maxx, maxz) {
+  if (CAPTURE.list) { CAPTURE.list.push(c); c.panel = CAPTURE.panel; }
   for (let ix = Math.floor(minx / CELL); ix <= Math.floor(maxx / CELL); ix++)
     for (let iz = Math.floor(minz / CELL); iz <= Math.floor(maxz / CELL); iz++) {
       const k = key(ix, iz);
@@ -91,4 +94,44 @@ export function ceilingAt(x, z, r, y0, y1) {
     if (Math.abs(lx) <= c.hw + r * 0.3 && Math.abs(lz) <= c.hd + r * 0.3) low = Math.min(low, c.y0);
   });
   return low;
+}
+
+/** Полная 3D-коллизия сферы (дрон): выталкивание по кратчайшей оси, включая верх и низ.
+    out.n — нормаль самого глубокого контакта, out.c — его коллайдер. */
+export function pushOut3D(p, r, out) {
+  out.hit = false; out.c = null; out.depth = 0;
+  for (let it = 0; it < 3; it++) {
+    let best = null, bd = 0, bx = 0, by = 0, bz = 0;
+    nearby(p.x, p.z, r + 2, c => {
+      if (c.dead || p.y + r <= c.y0 || p.y - r >= c.y1) return;
+      let hx = 0, hz = 0, hp;
+      if (c.t === 0) {
+        const dx = p.x - c.x, dz = p.z - c.z, d = Math.hypot(dx, dz), R2 = r + c.r;
+        if (d >= R2) return;
+        hp = R2 - d; if (d > 1e-5) { hx = dx / d; hz = dz / d; } else hx = 1;
+      } else {
+        const [lx, lz] = local(c, p.x, p.z);
+        const qx = Math.max(-c.hw, Math.min(c.hw, lx)), qz = Math.max(-c.hd, Math.min(c.hd, lz));
+        const dx = lx - qx, dz = lz - qz, d = Math.hypot(dx, dz);
+        if (d >= r) return;
+        let nx, nz;
+        if (d > 1e-5) { nx = dx / d; nz = dz / d; hp = r - d; }
+        else {
+          const px = c.hw - Math.abs(lx), pz = c.hd - Math.abs(lz);
+          if (px < pz) { nx = Math.sign(lx) || 1; nz = 0; hp = px + r; } else { nx = 0; nz = Math.sign(lz) || 1; hp = pz + r; }
+        }
+        hx = nx * c.c + nz * c.s; hz = -nx * c.s + nz * c.c;
+      }
+      const up = c.y1 - (p.y - r), down = (p.y + r) - c.y0;
+      let pen = hp, nx = hx, ny = 0, nz = hz;
+      if (up < pen) { pen = up; nx = 0; ny = 1; nz = 0; }
+      if (down < pen) { pen = down; nx = 0; ny = -1; nz = 0; }
+      if (pen > bd) { bd = pen; best = c; bx = nx; by = ny; bz = nz; }
+    });
+    if (!best) break;
+    p.x += bx * bd; p.y += by * bd; p.z += bz * bd;
+    if (bd > out.depth) { out.depth = bd; out.c = best; out.n.set(bx, by, bz); }
+    out.hit = true;
+  }
+  return out.hit;
 }

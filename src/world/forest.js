@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { scene, camera, Q } from '../core/env.js';
 import { clamp, lerp, smoothstep, fbm, rng, TAU, srnd, sr } from '../core/math.js';
-import { MAP, SPAWNS, CLUSTERS, terrainH, lakeRho, edgeDist, isFree, ISLAND } from './layout.js';
+import { MAP, SPAWNS, CLUSTERS, terrainH, lakeRho, edgeDist, isFree, ISLAND, inCamp } from './layout.js';
 import { M, depthFor } from '../gen/materials.js';
 import { injectWind } from './wind.js';
 import { cv, tex, sharpenAlpha, bleedColor, rgba } from '../gen/canvas.js';
@@ -25,6 +25,7 @@ export function forestDensity(x, z) {
   d *= smoothstep(1.2, 1.95, lakeRho(x, z));                     // луговина у воды
   for (const s of Object.values(SPAWNS)) d *= 0.12 + 0.88 * smoothstep(15, 30, Math.hypot(x - s.x, z - s.z));
   for (const c of Object.values(CLUSTERS)) d *= 0.3 + 0.7 * smoothstep(14, 32, Math.hypot(x - c.x, z - c.z));
+  if (inCamp(x, z, 5)) d *= 0.14;                                 // территорию лагеря вырубили, остались редкие сосны
   const e = edgeDist(x, z);
   if (e > MAP.PLAY - 3 && e < MAP.FENCE + 4) d *= 0.16;          // выжженная и расчищенная полоса
   if (e > MAP.FENCE + 4) d = Math.max(d, 0.85);                  // стена леса снаружи
@@ -290,6 +291,19 @@ function silMaterial() {
 export const TREES = [];          // {x,y,z,h,sp,v,r}
 const TREE_GRID = new Map();
 const tkey = (x, z) => Math.floor(x / 6) * 4096 + Math.floor(z / 6);
+/** Точка внутри кроны живого дерева (конус ели / шапка сосны) — для торможения дрона. */
+export function crownAt(x, y, z) {
+  const L = TREE_GRID.get(tkey(x, z));
+  if (!L) return null;
+  for (const t of L) {
+    if (t.broken || t.dead) continue;
+    const k = (y - t.y) / t.h;
+    if (k < 0.3 || k > 1) continue;
+    const r = t.sp === 'spruce' ? t.h * 0.25 * (1 - k) + 0.3 : t.h * 0.13;
+    if ((x - t.x) ** 2 + (z - t.z) ** 2 < r * r) return t;
+  }
+  return null;
+}
 /** Деревья в радиусе (для взрывов, огня, молний). */
 export function treesNear(x, z, r) {
   const out = [], n = Math.ceil(r / 6);

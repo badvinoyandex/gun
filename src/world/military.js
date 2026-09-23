@@ -4,7 +4,7 @@ import { rng, TAU, lerp, polyAt, clamp, hash2 } from '../core/math.js';
 import { MAP, SPAWNS, TRENCHES, TW, trenchTaper, terrainH, baseH, addPad, keep, edgeDist, PATHS, trenchDist, pathInfluence, isFree, polyDist } from './layout.js';
 import { hFast } from './heightcache.js';
 import { M, TEX } from '../gen/materials.js';
-import { box, cyl, beam, place, frame } from './builders.js';
+import { box, cyl, beam, place, frame, beginStruct, panel, noPanel, endStruct } from './builders.js';
 import { addBox, addCircle } from '../core/colliders.js';
 import { addLamp } from './lamps.js';
 import { makeCloth } from './cloth.js';
@@ -244,36 +244,40 @@ function dugout(x, z, rot, R) {
   const w = 4.6, d = 3.6, h = 2.1;
   // наземный сруб (ДЗОТ): пол на уровне площадки, сверху земляная подушка
   const fy = g + 0.02;
+  const S = beginStruct({ kind: 'dugout', x, z, rot, w, d, h, fy, fuel: 0.8, log: true });
+  noPanel();
   box(M.planksDark, x, fy - 0.05, z, w, 0.1, d, { rot, collide: true, tile: 1.2 });
-  // стены из брёвен
-  for (let y = 0; y < h; y += 0.26) {
-    for (const [lx, lz, len, r2] of [[0, -d / 2, w, 0], [-w / 2, 0, d, Math.PI / 2], [w / 2, 0, d, Math.PI / 2]]) {
-      const [px, pz] = F.p(lx, lz);
-      place(M.barkPine, new THREE.CylinderGeometry(0.13, 0.13, len + 0.3, 7), px, fy + 0.13 + y, pz, [0, rot + r2, Math.PI / 2]);
-    }
-    for (const s of [-1, 1]) {
-      const [px, pz] = F.p(s * (w / 2 - 0.9), d / 2);
-      place(M.barkPine, new THREE.CylinderGeometry(0.13, 0.13, 1.5, 7), px, fy + 0.13 + y, pz, [0, rot, Math.PI / 2]);
-    }
-  }
-  for (const [lx, lz, sx, sz] of [[0, -d / 2, w, 0.3], [-w / 2, 0, 0.3, d], [w / 2, 0, 0.3, d], [-w / 2 + 0.75, d / 2, 1.5, 0.3], [w / 2 - 0.75, d / 2, 1.5, 0.3]]) {
+  // стены из брёвен: каждая сторона — панель, рассыпается на брёвна
+  const logs = new THREE.CylinderGeometry(0.13, 0.13, 1, 7);
+  const sides = [[0, -d / 2, w, 0], [-w / 2, 0, d, Math.PI / 2], [w / 2, 0, d, Math.PI / 2], [-(w / 2 - 0.9) - 0.0, d / 2, 1.5, 0], [(w / 2 - 0.9), d / 2, 1.5, 0]];
+  const walls = [];
+  for (const [lx, lz, len, r2] of sides) {
     const [px, pz] = F.p(lx, lz);
-    addBox(px, fy + h / 2, pz, sx, h, sz, rot, { walk: false });
+    const pn = panel('wall', { hp: 2.2, load: true, mat: M.barkLog, dims: { x: px, y: fy + h / 2, z: pz, sx: len + 0.3, sy: h, sz: 0.3, rot: rot + r2, log: true } });
+    walls.push(pn);
+    for (let y = 0; y < h; y += 0.26) place(M.barkLog, logs, px, fy + 0.13 + y, pz, [0, rot + r2, Math.PI / 2], [1, len + 0.3, 1]);
+    addBox(px, fy + h / 2, pz, r2 ? 0.3 : len, h, r2 ? len : 0.3, rot, { walk: false });
   }
-  // накат и земляная насыпь
+  // накат и земляная насыпь: держатся на стенах; сверху можно стоять, дрон не пролетит
+  panel('roof', { hp: 2.5, sup: { list: walls, frac: 0.6 }, mode: 'rigid', density: 300 });
   for (let k = -d / 2 - 0.3; k <= d / 2 + 0.3; k += 0.27) {
     const [px, pz] = F.p(0, k);
-    place(M.barkPine, new THREE.CylinderGeometry(0.14, 0.14, w + 0.8, 7), px, fy + h + 0.12, pz, [0, rot, Math.PI / 2]);
+    place(M.barkLog, logs, px, fy + h + 0.12, pz, [0, rot, Math.PI / 2], [1, w + 0.8, 1]);
   }
+  addBox(x, fy + h + 0.4, z, w + 0.8, 0.8, d + 0.6, rot, { walk: true });
+  panel('roof', { hp: 2.5, sup: { list: walls, frac: 0.6 }, mode: 'dust' });
   const mound = new THREE.SphereGeometry(1, 16, 8, 0, TAU, 0, Math.PI / 2);
   place(M.dirtMound, mound, x, fy + h + 0.2, z, rot, [w * 0.62, 0.7, d * 0.7]);
+  addBox(x, fy + h + 0.75, z, w * 0.9, 0.5, d * 1.0, rot, { walk: true });
   for (let i = 0; i < 10; i++) {
     const [px, pz] = F.p(R.range(-w / 2, w / 2), R.range(-d / 2, d / 2));
     bag(px, fy + h + 0.55 + R.range(0, 0.2), pz, R.range(0, TAU), R.range(-0.2, 0.2), R.range(-0.2, 0.2));
   }
+  noPanel();
   // вход: ступени вниз
   const [sx, sz] = F.p(0, d / 2 + 0.5);
   box(M.planksDark, sx, g + 0.02, sz, 1.2, 0.08, 0.6, { rot, tile: 1 });
+  endStruct();
   // коптилка внутри
   const [lx, lz] = F.p(w / 2 - 0.6, -d / 2 + 0.5);
   addLamp({ kind: 'bulb', x: lx, y: fy + 1.6, z: lz, flick: 0.2, ground: fy });
@@ -299,7 +303,7 @@ export function planMilitary() {
   // блиндажи в конце окопов: вход смотрит в окоп, сруб — за аппарелью
   for (const t of TRENCHES) for (const end of [0, 1]) {
     if (!(end ? t.dugout1 : t.dugout0)) continue;
-    const e = trenchEnd(t, end), off = 1.8 + 0.9;
+    const e = trenchEnd(t, end), off = 1.8 + 1.6;
     const x = e.x + e.ox * off, z = e.z + e.oz * off;
     DUGOUTS.push({ x, z, rot: Math.atan2(-e.ox, -e.oz) });
     keep(x, z, 3.4);
@@ -462,6 +466,7 @@ function tent(x, z, rot, R) {
   for (const lz of [-2.2, 0, 2.2]) { const [px, pz] = F.p(0, lz); cyl(M.deadwood, px, y + 1.1, pz, 0.04, 0.04, 2.2, { seg: 5 }); }
   for (const s of [-1, 1]) { const [px, pz] = F.p(s * 1.85, 0); addBox(px, y + 0.6, pz, 0.3, 1.2, 4.4, rot, { walk: false }); }
   const [px, pz] = F.p(0, -2.2); addBox(px, y + 1, pz, 3.6, 2, 0.2, rot, { walk: false });
+  addBox(x, y + 1.85, z, 3.2, 0.6, 4.4, rot, { walk: true });
 }
 
 /* ---------- Минное поле ---------- */

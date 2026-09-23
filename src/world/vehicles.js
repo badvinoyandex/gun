@@ -65,7 +65,7 @@ export function vehicle(type, x, z, rot, o = {}) {
   if (o.flip) {
     // на крыше: вращаем кузов вокруг продольной оси
     place(paint, GEO[type], x, ground + T.H - T.clear + 0.05, z, [0.05, rot, Math.PI - 0.08]);
-    addBox(x, ground + T.H / 2, z, T.W, T.H, T.L, rot);
+    addBox(x, ground + T.H / 2, z, T.W, T.H, T.L, rot).car = type;
     return;
   }
   place(paint, GEO[type], x, y - T.clear, z, rotE);
@@ -120,6 +120,6 @@ export function vehicle(type, x, z, rot, o = {}) {
     const [dx, , dz] = W(side * (T.W / 2 + 0.9), 0, -0.2);
     box(paint, dx, terrainH(dx, dz) + 0.05, dz, 1.0, 0.05, 0.9, { rot: rot + R.range(-0.5, 0.5), rx: 0.06, tile: 1 });
   }
-  addBox(x, ground + T.H / 2 - drop / 2, z, T.W, T.H - drop, T.L, rot, { walk: false });
+  addBox(x, ground + T.H / 2 - drop / 2, z, T.W, T.H - drop, T.L, rot, { walk: false }).car = type;
 }
 export const VEHICLE_SIZE = Object.fromEntries(Object.entries(TYPES).map(([k, v]) => [k, { L: v.L, W: v.W, H: v.H }]));
