@@ -9161,7 +9161,12 @@ function updateDestruction(dt) {
   updateFalling(dt);
   updateWaves(dt);
 }
-var destructionStats = () => ({ craters: DYN_CRATERS.length, fallen: FALLING.length });
+var destructionStats = () => ({
+  craters: DYN_CRATERS.length,
+  fallen: FALLING.length,
+  fallenTilt: FALLING.map((f) => +(Math.acos(Math.min(1, new THREE23.Vector3(0, 1, 0).applyQuaternion(f.group.quaternion).y)) * 57.3).toFixed(0)),
+  settled: FALLING.filter((f) => f.frozen).length
+});
 
 // src/game/player.js
 import * as THREE24 from "three";
@@ -10326,6 +10331,7 @@ function finish() {
     map: MAP,
     spawns: SPAWNS,
     trenches: TRENCHES,
+    trees: TREES,
     // логика без отрисовки: для автотестов на медленных машинах
     simulate: (dt, n2 = 1) => {
       for (let i = 0; i < n2; i++) {

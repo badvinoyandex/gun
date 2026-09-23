@@ -347,4 +347,5 @@ export function updateDestruction(dt) {
   updateFalling(dt);
   updateWaves(dt);
 }
-export const destructionStats = () => ({ craters: DYN_CRATERS.length, fallen: FALLING.length });
+export const destructionStats = () => ({ craters: DYN_CRATERS.length, fallen: FALLING.length,
+  fallenTilt: FALLING.map(f => +(Math.acos(Math.min(1, new THREE.Vector3(0, 1, 0).applyQuaternion(f.group.quaternion).y)) * 57.3).toFixed(0)), settled: FALLING.filter(f => f.frozen).length });

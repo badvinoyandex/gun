@@ -42,6 +42,11 @@ const floor = TRENCHES.map(t => {
 });
 ok(floor.every(d => d < -1.0), `дно окопов глубже 1 м (мин. ${Math.min(...floor.map(d => -d)).toFixed(2)} м)`);
 
+// окопы не пересекают тропы (разрыв у тропы делается автоматически)
+const crossing = TRENCHES.filter(t => t.pts.some(([x, z]) => pathInfluence(x, z, 0.8) > 0)).length;
+ok(crossing === 0, `окопы не заходят на тропы (${crossing})`);
+ok(TRENCHES.length >= 20, `окопов не меньше 20 (${TRENCHES.length})`);
+
 console.log('Минное поле');
 ok(inMinefield(0, -115) && inMinefield(115, 0) && !inMinefield(0, -100), 'полоса 108–122 м по всему периметру');
 ok(CRATERS.some(c => c.mine), 'в полосе есть воронки');

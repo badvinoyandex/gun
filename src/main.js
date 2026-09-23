@@ -7,7 +7,7 @@ import { buildHeightCache, hFast, heightGrid } from './world/heightcache.js';
 import { initPhysics, buildStaticWorld, buildPlayerProxy, stepPhysics, movePlayerProxy, physStats, PHYS } from './core/physics.js';
 import { buildTerrain } from './world/terrain.js';
 import { buildSky, updateSky, SKY, TIME, nextPhase, fmtTime } from './world/sky.js';
-import { buildForest, updateForestLOD, forestStats } from './world/forest.js';
+import { buildForest, updateForestLOD, forestStats, TREES } from './world/forest.js';
 import { buildGrass, buildUndergrowth, refreshGrass, GRASS } from './world/groundcover.js';
 import { buildLake, updateLake, planPiers } from './world/lake.js';
 import { planBuildings, buildBuildings, HOUSES } from './world/buildings.js';
@@ -97,7 +97,7 @@ function finish() {
     setTime: h => { TIME.h = h; updateSky(0); },
     teleport: (x, y, z, yaw = PL.yaw, pitch = PL.pitch) => { PL.pos.set(x, y, z); PL.vel.set(0, 0, 0); PL.yaw = yaw; PL.pitch = pitch; stopCinematic(); },
     lookAt: (x, y, z) => { const dx = x - PL.pos.x, dy = y - PL.pos.y, dz = z - PL.pos.z; PL.yaw = Math.atan2(-dx, -dz); PL.pitch = Math.atan2(dy, Math.hypot(dx, dz)); },
-    step: dt => frame(dt), tick: (dt, n = 1) => { for (let i = 0; i < n; i++) frame(dt, false); }, explode, ignite, shoot, artillery, aimPoint, weather: WEATHER, setWeather, strikeNow, fire: FIRE, setMode, spawnAt, startCinematic, terrainH, map: MAP, spawns: SPAWNS, trenches: TRENCHES,
+    step: dt => frame(dt), tick: (dt, n = 1) => { for (let i = 0; i < n; i++) frame(dt, false); }, explode, ignite, shoot, artillery, aimPoint, weather: WEATHER, setWeather, strikeNow, fire: FIRE, setMode, spawnAt, startCinematic, terrainH, map: MAP, spawns: SPAWNS, trenches: TRENCHES, trees: TREES,
     // логика без отрисовки: для автотестов на медленных машинах
     simulate: (dt, n = 1) => { for (let i = 0; i < n; i++) { FRAME.t += dt; updatePlayer(dt); updateExplosions(dt); stepPhysics(dt); } return PL; }, phys: PHYS,
     stats: () => ({
