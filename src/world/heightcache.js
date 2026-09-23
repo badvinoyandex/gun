@@ -34,7 +34,7 @@ function grassDensityExact(x, z) {
   if (pi > 0.5) return 0;
   const edge = pathInfluence(x, z, 1.6) > 0 ? 0.35 : 0;
   const td = trenchDist(x, z);
-  if (td < 0.9) return 0;
+  if (td < 1.2) return 0;
   let d = (1 - forestDensity(x, z)) * 0.85 + 0.12 + edge;
   d += (1 - smoothstep(1.05, 1.6, rho)) * 0.6;
   const e = edgeDist(x, z);

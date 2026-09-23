@@ -688,3 +688,28 @@ export function waterNormals() {
   hx.putImageData(img, 0, 0);
   return tex(heightToNormal(h, 3.5), 1, 1, false);
 }
+/** Плетень: горизонтальные прутья, переплетённые через вертикальные колья. */
+export function wattle() {
+  const S = TS(256), [c, x] = cv(S), [h, hx] = cv(S), K = S / 256;
+  x.fillStyle = '#2a2118'; x.fillRect(0, 0, S, S);
+  hx.fillStyle = '#202020'; hx.fillRect(0, 0, S, S);
+  const rod = 9 * K, stake = S / 4;
+  for (let y = 0, r = 0; y < S; y += rod, r++) {
+    for (let k = 0; k < 4; k++) {
+      // прут то сверху кола, то снизу — перевязка шахматкой
+      const front = (r + k) % 2 === 0, x0 = k * stake, v = sr(0.8, 1.15);
+      const g = x.createLinearGradient(0, y, 0, y + rod);
+      g.addColorStop(0, rgba(70 * v, 56 * v, 40 * v)); g.addColorStop(0.45, rgba(118 * v, 96 * v, 70 * v)); g.addColorStop(1, rgba(44 * v, 34 * v, 24 * v));
+      x.fillStyle = g; x.fillRect(x0, y + 0.5 * K, stake, rod - 1 * K);
+      const hg = hx.createLinearGradient(0, y, 0, y + rod);
+      hg.addColorStop(0, '#404040'); hg.addColorStop(0.5, front ? '#f0f0f0' : '#b0b0b0'); hg.addColorStop(1, '#404040');
+      hx.fillStyle = hg; hx.fillRect(x0, y + 0.5 * K, stake, rod - 1 * K);
+    }
+  }
+  for (let k = 0; k < 4; k++) {
+    x.fillStyle = 'rgba(30,22,16,.85)'; x.fillRect(k * stake - 3 * K, 0, 6 * K, S);
+    hx.fillStyle = '#909090'; hx.fillRect(k * stake - 3 * K, 0, 6 * K, S);
+  }
+  grain(x, S, S, 0.08);
+  return { map: tex(c), normal: tex(heightToNormal(h, 2.2), 1, 1, false) };
+}

@@ -79,6 +79,7 @@ export function buildMaterials() {
   M.rubber = std({ color: 0x151515, roughness: 0.92 });
   M.glass = std({ color: 0x1c2428, roughness: 0.08, metalness: 0.9, transparent: true, opacity: 0.55 });
   M.sack = surf(TX.sackcloth(), { rough: 0.98 });
+  M.wattle = surf(TX.wattle(), { rough: 0.97, nscale: 1.2 });
   M.canvas = std({ color: 0x5d5e44, roughness: 0.95, side: THREE.DoubleSide });
   M.camo = std({ map: TX.camoNet(), alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.95 });
   M.wire = std({ color: 0x4a4038, roughness: 0.6, metalness: 0.6 });

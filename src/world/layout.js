@@ -1,4 +1,4 @@
-import { clamp, lerp, smoothstep, fbm, vnoise, polyDist, polyLength, chaikin, mirrorPts, rng } from '../core/math.js';
+import { clamp, lerp, smoothstep, fbm, vnoise, polyDist, polyLength, polyAt, chaikin, mirrorPts, rng } from '../core/math.js';
 
 /* ============================================================================
    ПЛАН КАРТЫ «ТИХИЙ БОР»
@@ -109,40 +109,6 @@ addSym([[-82, 0], [-62, -2], [-41, -7]], 1.8, 'trail', { name: 'связка З'
 addSym([[-2, 90], [2, 66], [6.5, 41]], 1.8, 'trail', { name: 'связка Ю' });
 addSym([[-70, 70], [-80, 60], [-90, 44]], 1.6, 'trail', { name: 'тыл A' });
 
-/* ---------- Окопы ----------
-   Зигзаг (траверсы через 5 м) гасит продольный огонь; концы — пологие
-   выходы-аппарели; в месте пересечения с тропой — разрыв. */
-export const TRENCHES = [];
-function zigzag(cx, cz, ax, az, t0, t1, amp, step = 5) {
-  // ax,az — направление линии; нормаль — «к противнику»
-  const nx = -az, nz = ax, pts = [];
-  let k = 0;
-  for (let t = t0; t <= t1 + 0.01; t += step, k++) {
-    const o = (k % 2 ? amp : -amp) * (t === t0 || t + step > t1 + 0.01 ? 0 : 1);
-    pts.push([cx + ax * t + nx * o, cz + az * t + nz * o]);
-  }
-  return pts;
-}
-function addTrench(pts, opt = {}) {
-  const sm = chaikin(pts, 2);
-  TRENCHES.push({ pts: sm, len: polyLength(sm), depth: opt.depth ?? 1.6, name: opt.name || '' });
-}
-function trenchSym(pts, opt) { addTrench(pts, opt); addTrench(mirrorPts(pts), opt); }
-{
-  // Передний рубеж базы: поперёк оси A→центр, в 30 м от флага.
-  const cx = -62.5, cz = 62.5, ax = S2, az = S2;
-  trenchSym(zigzag(cx, cz, ax, az, -28, -3, 1.6), { name: 'рубеж, левое крыло' });
-  trenchSym(zigzag(cx, cz, ax, az, 3, 28, 1.6), { name: 'рубеж, правое крыло' });
-  // Ход сообщения от рубежа к базе.
-  trenchSym([[-54.8, 70.2], [-58, 74], [-62, 76], [-66, 80], [-70.5, 83.5]], { name: 'ход сообщения', depth: 1.5 });
-  // Передовые ячейки на берегу.
-  const a = lakeXZ(-9, -27), b = lakeXZ(0, -28.5), c = lakeXZ(9, -27);
-  trenchSym([a, b, c], { name: 'береговые ячейки', depth: 1.35 });
-  // Старая траншея у турбазы (обе стороны подходов) и у кордона.
-  trenchSym([[-85, -28], [-82, -33], [-83, -38], [-80, -43], [-81, -49]], { name: 'траншея турбазы З', depth: 1.5 });
-  trenchSym([[-52, -81], [-46, -84], [-40, -82], [-34, -85]], { name: 'траншея турбазы С', depth: 1.5 });
-}
-
 /* ---------- Площадки под постройками ---------- */
 export const PADS = [];   // {x,z,hw,hd,rot,y?,m}
 export function addPad(x, z, hw, hd, rot = 0, m = 3) { const p = { x, z, hw, hd, rot, m }; PADS.push(p); return p; }
@@ -175,6 +141,102 @@ function makeIndex(lines, pad) {
   return grid;
 }
 const PATH_IDX = makeIndex(PATHS, 3);
+/* ---------- Окопы ----------
+   Зигзаг (траверсы через 5 м) гасит продольный огонь. Линия, пересекающая
+   тропу, автоматически рвётся: у тропы — пологие выходы-аппарели. Конец окопа,
+   упирающийся в другой окоп, остаётся открытым (стык без аппарели и стенок). */
+export const TRENCHES = [];
+/** Профиль окопа: обшивка на TW.wall от оси, дно ровное до TW.floor, стенка грунта до TW.top. */
+export const TW = { wall: 0.66, floor: 0.8, top: 1.1, cap: 1.08, ramp: 3.2 };
+function zigzag(cx, cz, ax, az, t0, t1, amp, step = 5) {
+  // ax,az — направление линии; нормаль — «к противнику»
+  const nx = -az, nz = ax, pts = [];
+  let k = 0;
+  for (let t = t0; t <= t1 + 0.01; t += step, k++) {
+    const o = (k % 2 ? amp : -amp) * (t === t0 || t + step > t1 + 0.01 ? 0 : 1);
+    pts.push([cx + ax * t + nx * o, cz + az * t + nz * o]);
+  }
+  return pts;
+}
+function resample(pts, step) {
+  const L = polyLength(pts), n = Math.max(2, Math.ceil(L / step)), out = [];
+  for (let i = 0; i <= n; i++) { const a = polyAt(pts, L * i / n); out.push([a.x, a.z]); }
+  return out;
+}
+const TRENCH_PLAN = [];
+/** Окоп: сглаживание, затем разрез по тропам (куски короче 7 м отбрасываются). */
+function addTrench(pts, opt = {}) {
+  const sm = resample(chaikin(pts, opt.sharp ? 1 : 2), 0.9);
+  let run = [];
+  const flush = () => {
+    if (run.length > 1 && polyLength(run) > 7) TRENCH_PLAN.push({ pts: run, opt });
+    run = [];
+  };
+  for (const p of sm) {
+    // проверка и в зеркальной точке: разрывы у A и D совпадают, рельеф остаётся симметричным
+    if (pathInfluence(p[0], p[1], 1.5) > 0 || pathInfluence(-p[0], -p[1], 1.5) > 0) flush();
+    else run.push(p);
+  }
+  flush();
+}
+function trenchSym(pts, opt) { addTrench(pts, opt); addTrench(mirrorPts(pts), { ...opt, mirror: true }); }
+function arc(cx, cz, r, a0, a1, step, amp) {
+  const pts = [], n = Math.max(2, Math.round(Math.abs(a1 - a0) * r / step));
+  for (let i = 0; i <= n; i++) {
+    const a = a0 + (a1 - a0) * i / n, rr = r + (i === 0 || i === n ? 0 : (i % 2 ? amp : -amp));
+    pts.push([cx + Math.cos(a) * rr, cz + Math.sin(a) * rr]);
+  }
+  return pts;
+}
+{
+  // Передний рубеж базы: поперёк оси A→центр, в 30 м от флага.
+  const cx = -62.5, cz = 62.5, ax = S2, az = S2, fx = S2, fz = -S2;
+  trenchSym(zigzag(cx, cz, ax, az, -28, -3, 1.6), { name: 'рубеж, левое крыло', dugout0: true, bays: true });
+  trenchSym(zigzag(cx, cz, ax, az, 3, 28, 1.6), { name: 'рубеж, правое крыло', bays: true });
+  // Ход сообщения от рубежа к базе.
+  trenchSym([[-54.8, 70.2], [-58, 74], [-62, 76], [-66, 80], [-70.5, 83.5]], { name: 'ход сообщения', depth: 1.5 });
+  // Вторая линия: дуга вокруг базы в 19 м, траверсы через 4 м.
+  const A = SPAWNS.A;
+  trenchSym(arc(A.x, A.z, 22, -1.74, 0.26, 4, 0.8), { name: 'вторая линия', depth: 1.55, bays: true, dugout1: true });
+  // Передовые сапы от рубежа к противнику с пулемётной ячейкой на конце.
+  const onPlan = (x, z) => {
+    let best = null, bd = 1e9;
+    for (const o of TRENCH_PLAN) {
+      const q = {}, d = polyDist(x, z, o.pts, q);
+      if (d < bd) { bd = d; const a = polyAt(o.pts, q.s); best = [a.x, a.z]; }
+    }
+    return best;
+  };
+  for (const t of [-18, 18]) {
+    const b = onPlan(cx + ax * t, cz + az * t);
+    trenchSym([b, [b[0] + fx * 4 + ax * 0.9, b[1] + fz * 4 + az * 0.9], [b[0] + fx * 9.5, b[1] + fz * 9.5]], { name: 'сапа', depth: 1.5, sharp: true, nest1: true });
+  }
+  // Фланговая позиция у западной тропы.
+  trenchSym(zigzag(-80, 24, 0.34, -0.94, -10, 12, 1.3, 4.4), { name: 'фланговая позиция З', bays: true, dugout1: true });
+  // Передовой окоп поперёк центральной тропы (разрыв под тропу — автоматически).
+  trenchSym(zigzag(-40, 40, S2, S2, -15, 15, 1.2, 4), { name: 'окоп у кольцевой', depth: 1.5, bays: true });
+  // Передовые ячейки на берегу.
+  const a = lakeXZ(-9, -27), b = lakeXZ(0, -28.5), c = lakeXZ(9, -27);
+  trenchSym([a, b, c], { name: 'береговые ячейки', depth: 1.5 });
+  // Старая траншея у турбазы (обе стороны подходов) и у кордона.
+  trenchSym([[-85, -28], [-82, -33], [-83, -38], [-80, -43], [-81, -49]], { name: 'траншея турбазы З', depth: 1.5 });
+  trenchSym([[-52, -81], [-46, -84], [-40, -82], [-34, -85]], { name: 'траншея турбазы С', depth: 1.5 });
+}
+// Концы: стык с другим окопом — открыт, иначе аппарель. Сторона противника — к центру карты.
+for (let i = 0; i < TRENCH_PLAN.length; i++) {
+  const { pts, opt } = TRENCH_PLAN[i];
+  const near = (p) => {
+    let best = 1e9;
+    TRENCH_PLAN.forEach((o, j) => { if (j !== i) best = Math.min(best, polyDist(p[0], p[1], o.pts)); });
+    return best;
+  };
+  const len = polyLength(pts);
+  TRENCHES.push({
+    pts, len, depth: opt.depth ?? 1.8, name: opt.name || '', open0: near(pts[0]) < 1.3, open1: near(pts[pts.length - 1]) < 1.3,
+    bays: !!opt.bays, dugout0: !!opt.dugout0, dugout1: !!opt.dugout1, nest1: !!opt.nest1
+  });
+}
+
 const TRENCH_IDX = makeIndex(TRENCHES, 4);
 const _q = { d: 0, s: 0, seg: null };
 function nearestSeg(grid, x, z, out = _q) {
@@ -269,6 +331,10 @@ function padRectDist(p, x, z) {
 const _pi = { road: 0, d: 0 };
 const _tq = { d: 0, s: 0, seg: null };
 
+/** Глубина окопа вдоль оси: 1 в середине, 0 на выходе-аппарели. */
+export function trenchTaper(tr, s) {
+  return (tr.open0 ? 1 : smoothstep(0, TW.ramp, s)) * (tr.open1 ? 1 : smoothstep(0, TW.ramp, tr.len - s));
+}
 /** Итоговая высота. Слои: холмы → чаша озера → площадки → тропы → окопы → воронки. */
 export function terrainH(x, z) {
   let h = baseH(x, z);
@@ -290,22 +356,23 @@ export function terrainH(x, z) {
     if (p.y === undefined) p.y = baseH(p.x, p.z);
     h = lerp(h, p.y, 1 - smoothstep(0, p.m, d));
   }
-  // Микрорельеф: кочки и корни — кроме троп.
+  // Окопы: ровное дно, почти отвесная стенка за обшивкой, бруствер.
+  let carve = 0, parapet = 0;
+  nearestSeg(TRENCH_IDX, x, z, _tq);
+  if (_tq.seg && _tq.d < 3.2) {
+    const tr = TRENCHES[_tq.seg.li];
+    const s = _tq.s, taper = trenchTaper(tr, s);
+    carve = (1 - smoothstep(TW.floor, TW.top, _tq.d)) * taper;
+    parapet = 0.42 * Math.exp(-Math.pow((_tq.d - 1.6) / 0.5, 2)) * (0.4 + 0.6 * taper);
+    h -= tr.depth * carve;
+  }
+  // Микрорельеф: кочки и корни — кроме троп и дна окопов.
   const pi = pathInfluence(x, z, 0, _pi);
-  h += (vnoise(x * 0.55, z * 0.55) - 0.5) * 0.22 * (1 - pi);
+  h += (vnoise(x * 0.55, z * 0.55) - 0.5) * 0.22 * (1 - pi) * (1 - carve) + parapet;
   if (pi > 0) {
     h -= pi * 0.07;
     // колея на дорогах
     if (_pi.road) h -= 0.07 * Math.exp(-Math.pow((_pi.d - 0.95) / 0.28, 2)) * pi;
-  }
-  // Окопы.
-  nearestSeg(TRENCH_IDX, x, z, _tq);
-  if (_tq.seg && _tq.d < 3.2) {
-    const tr = TRENCHES[_tq.seg.li];
-    const s = _tq.s, taper = smoothstep(0, 3.0, s) * smoothstep(0, 3.0, tr.len - s);
-    const inner = 1 - smoothstep(0.52, 0.78, _tq.d);
-    const parapet = 0.42 * Math.exp(-Math.pow((_tq.d - 1.55) / 0.55, 2)) * (0.4 + 0.6 * taper);
-    h += parapet - tr.depth * inner * taper;
   }
   // Воронки.
   for (const c of CRATERS) {

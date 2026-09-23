@@ -17,7 +17,7 @@ export const TERRAIN = { chunks: [], mat: null };
 function chunkStep(x0, z0) {
   const pad = 3.5, x1 = x0 + CH, z1 = z0 + CH;
   const inBox = (x, z) => x > x0 - pad && x < x1 + pad && z > z0 - pad && z < z1 + pad;
-  for (const t of TRENCHES) for (const p of t.pts) if (inBox(p[0], p[1])) return Q.tex < 0.6 ? 0.4 : 0.32;
+  for (const t of TRENCHES) for (const p of t.pts) if (inBox(p[0], p[1])) return Q.tex < 0.6 ? 0.32 : 0.25;
   for (const c of CRATERS) if (inBox(c.x, c.z)) return 0.5;
   // берег острова и уреза — плавнее
   for (let i = 0; i <= 4; i++) for (let j = 0; j <= 4; j++) {

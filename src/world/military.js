@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { scene, Q } from '../core/env.js';
 import { rng, TAU, lerp, polyAt, clamp, hash2 } from '../core/math.js';
-import { MAP, SPAWNS, TRENCHES, terrainH, baseH, addPad, keep, edgeDist, PATHS, trenchDist, pathInfluence, isFree } from './layout.js';
+import { MAP, SPAWNS, TRENCHES, TW, trenchTaper, terrainH, baseH, addPad, keep, edgeDist, PATHS, trenchDist, pathInfluence, isFree, polyDist } from './layout.js';
 import { hFast } from './heightcache.js';
 import { M, TEX } from '../gen/materials.js';
 import { box, cyl, beam, place, frame } from './builders.js';
@@ -48,42 +48,196 @@ export function sandbagRing(x, z, r, rows, gapA, gapW, R) {
   }
 }
 
-/* ---------- Окопы: обшивка, настил, бруствер ---------- */
-function buildTrench(t, R) {
-  const step = 1.2;
-  const toCenterSign = (x, z, nx, nz) => (nx * -x + nz * -z) > 0 ? 1 : -1;
-  for (let s = 0.6; s < t.len - 0.6; s += step) {
-    const a = polyAt(t.pts, s), nx = -a.tz, nz = a.tx;
-    const taper = clamp(Math.min(s, t.len - s) / 3.0, 0, 1);
-    if (taper < 0.55) continue;                          // аппарели на концах без обшивки
-    const floor = terrainH(a.x, a.z);
-    const rot = Math.atan2(a.tx, a.tz) + Math.PI / 2;
-    for (const side of [-1, 1]) {
-      const wx = a.x + nx * 0.6 * side, wz = a.z + nz * 0.6 * side;
-      const top = Math.max(terrainH(a.x + nx * 0.95 * side, a.z + nz * 0.95 * side), floor + 0.6);
-      const hh = top - floor + 0.08;
-      if (R() < 0.12) continue;                          // обшивка выбита — голая глина
-      box(R() < 0.5 ? M.planks : M.planksDark, wx, floor + hh / 2 - 0.02, wz, step + 0.02, hh, 0.05, { rot, rz: R.range(-0.03, 0.03), rx: side * R.range(0.02, 0.07), tile: 1.1, vertical: true });
-      if (Math.round(s / step) % 2 === 0) cyl(M.deadwood, wx - nx * 0.02 * side + a.tx * step / 2, floor + hh / 2, wz - nz * 0.02 * side + a.tz * step / 2, 0.05, 0.05, hh + 0.25, { seg: 6 });
-      addBox(wx + nx * side * 0.2, floor + hh / 2, wz + nz * side * 0.2, step, hh, 0.45, rot, { walk: false });
+/* ---------- Окопы: обшивка, настил, бруствер ----------
+   Стенки строятся по смещённым от оси ломаным (со скосом на изгибах), поэтому
+   обшивка идёт без щелей и нигде не заходит в проход. Коллайдеры — те же
+   отрезки: за доски не пройти ни на прямых, ни на изгибах, ни на аппарелях. */
+const ENEMY = (x, z, nx, nz) => (nx * -x + nz * -z) > 0 ? 1 : -1;
+/** Точка внутри прохода другого окопа — там стенку не ставим (стык). */
+function inOtherTrench(ti, x, z, pad) {
+  for (let j = 0; j < TRENCHES.length; j++) {
+    if (j === ti) continue;
+    const o = TRENCHES[j];
+    if (polyDist(x, z, o.pts) < pad) return true;
+  }
+  return false;
+}
+function offsetLine(t, side, off) {
+  const P = t.pts, n = P.length, out = [];
+  for (let i = 0; i < n; i++) {
+    const a = P[Math.max(0, i - 1)], b = P[Math.min(n - 1, i + 1)], c = P[i];
+    let tx = b[0] - a[0], tz = b[1] - a[1];
+    const l = Math.hypot(tx, tz) || 1; tx /= l; tz /= l;
+    // скос: на изгибе смещение по биссектрисе длиннее, иначе стенка «съезжает» в проход
+    let miter = 1;
+    if (i > 0 && i < n - 1) {
+      const sx = c[0] - a[0], sz = c[1] - a[1], sl = Math.hypot(sx, sz) || 1;
+      miter = 1 / Math.max(0.6, (-sz / sl) * -tz + (sx / sl) * tx);
     }
-    // настил-трап из поперечных досок
-    for (let k = 0; k < 4; k++) {
-      const ss = s - step / 2 + k * 0.3, b = polyAt(t.pts, ss);
-      if (R() < 0.1) continue;
-      box(M.planksDark, b.x, terrainH(b.x, b.z) + 0.05, b.z, 0.95, 0.04, 0.2, { rot: Math.atan2(b.tx, b.tz), rz: R.range(-0.04, 0.04), tile: 1 });
+    out.push({ x: c[0] - tz * off * side * miter, z: c[1] + tx * off * side * miter, cx: c[0], cz: c[1], nx: -tz, nz: tx, tx, tz });
+  }
+  return out;
+}
+class Strip {
+  constructor() { this.p = []; this.n = []; this.uv = []; }
+  quad(a, b, c, d, n, uvs) {
+    // a-b нижняя кромка, d-c верхняя (против часовой при взгляде по нормали)
+    for (const [v, t] of [[a, uvs[0]], [b, uvs[1]], [c, uvs[2]], [a, uvs[0]], [c, uvs[2]], [d, uvs[3]]]) {
+      this.p.push(v[0], v[1], v[2]); this.n.push(n[0], n[1], n[2]); this.uv.push(t[0], t[1]);
     }
-    // мешки на бруствере со стороны противника (к центру карты)
-    const side = toCenterSign(a.x, a.z, nx, nz);
-    if (R() < 0.75) {
-      const bx = a.x + nx * 1.05 * side, bz = a.z + nz * 1.05 * side, y = terrainH(bx, bz);
-      for (let r = 0; r < 2; r++) for (let k = 0; k < 2; k++) {
-        const off = (k - 0.5) * 0.56 + (r % 2) * 0.28;
-        bag(bx + a.tx * off, y + 0.05 + r * 0.16, bz + a.tz * off, rot + R.range(-0.1, 0.1), 0, R.range(-0.08, 0.08));
+  }
+  flush(mat) {
+    if (!this.p.length) return;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(this.p, 3));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(this.n, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(this.uv, 2));
+    place(mat, g, 0, 0, 0);
+    this.p = []; this.n = []; this.uv = [];
+  }
+}
+export const TRENCH_LAMPS = [];
+let lanternMat = null;
+function buildTrench(t, ti, R) {
+  const P = t.pts, n = P.length;
+  const walls = { planks: new Strip(), planksDark: new Strip(), deadwood: new Strip(), cap: new Strip() };
+  const TPL = 1.1;                                   // метров на повтор текстуры досок
+  const enemySide = (() => { const m = P[n >> 1], m2 = P[Math.min(n - 1, (n >> 1) + 1)]; return ENEMY(m[0], m[1], -(m2[1] - m[1]), m2[0] - m[0]); })();
+  const floorAt = (x, z) => terrainH(x, z);
+  const sArr = [0];
+  for (let i = 1; i < n; i++) sArr.push(sArr[i - 1] + Math.hypot(P[i][0] - P[i - 1][0], P[i][1] - P[i - 1][1]));
+  for (const side of [-1, 1]) {
+    const inner = offsetLine(t, side, TW.wall), outer = offsetLine(t, side, TW.cap), col = offsetLine(t, side, TW.wall + 0.16);
+    const V = inner.map((q, i) => {
+      const fl = floorAt(q.cx, q.cz) - 0.04;
+      const top = Math.max(terrainH(outer[i].x, outer[i].z), terrainH(q.cx + q.nx * side * 1.25, q.cz + q.nz * side * 1.25)) + 0.03;
+      const ok = top - fl > 0.14 && !inOtherTrench(ti, q.x, q.z, TW.wall + 0.03);
+      return { fl, top, ok };
+    });
+    // панели по 1.2–2.6 м: доски вертикально/горизонтально, светлые/тёмные, изредка плетень
+    let panelEnd = -1, kind = 'planks', vert = true, lean = 0;
+    for (let i = 0; i < n - 1; i++) {
+      const A = V[i], B = V[i + 1];
+      if (!A.ok || !B.ok) continue;
+      if (sArr[i] >= panelEnd) {
+        panelEnd = sArr[i] + R.range(1.2, 2.6);
+        const r = R();
+        kind = r < 0.5 ? 'planks' : r < 0.86 ? 'planksDark' : 'deadwood';
+        vert = kind === 'deadwood' ? false : R() < 0.6;
+        lean = side * R.range(0.0, 0.05);
+      }
+      const a = inner[i], b = inner[i + 1];
+      // лёгкий наклон обшивки наружу — стенка «держит» грунт
+      const la = (A.top - A.fl) * lean, lb = (B.top - B.fl) * lean;
+      const p0 = [a.x, A.fl, a.z], p1 = [b.x, B.fl, b.z];
+      const p2 = [b.x + b.nx * side * lb, B.top, b.z + b.nz * side * lb], p3 = [a.x + a.nx * side * la, A.top, a.z + a.nz * side * la];
+      const nn = [-(a.nx + b.nx) * 0.5 * side, 0.05, -(a.nz + b.nz) * 0.5 * side];
+      const s0 = sArr[i] / TPL, s1 = sArr[i + 1] / TPL;
+      const uvs = vert
+        ? [[A.fl / TPL, s0], [B.fl / TPL, s1], [B.top / TPL, s1], [A.top / TPL, s0]]
+        : [[s0, A.fl / (TPL * 0.8)], [s1, B.fl / (TPL * 0.8)], [s1, B.top / (TPL * 0.8)], [s0, A.top / (TPL * 0.8)]];
+      // порядок обхода — лицом в проход
+      if (side > 0) walls[kind].quad(p1, p0, p3, p2, nn, [uvs[1], uvs[0], uvs[3], uvs[2]]);
+      else walls[kind].quad(p0, p1, p2, p3, nn, uvs);
+      // верхняя обвязка: доска-«шапка» от обшивки до грунта
+      const oa = outer[i], ob = outer[i + 1];
+      const c0 = [p3[0], A.top, p3[2]], c1 = [p2[0], B.top, p2[2]], c2 = [ob.x, B.top - 0.02, ob.z], c3 = [oa.x, A.top - 0.02, oa.z];
+      const cuv = [[s0, 0], [s1, 0], [s1, 0.38], [s0, 0.38]];
+      if (side > 0) walls.cap.quad(c0, c1, c2, c3, [0, 1, 0], cuv);
+      else walls.cap.quad(c1, c0, c3, c2, [0, 1, 0], [cuv[1], cuv[0], cuv[3], cuv[2]]);
+      // коллайдер: тот же отрезок, толщина 0.32 за обшивкой, внахлёст 8 см
+      const ca = col[i], cb = col[i + 1];
+      const L = Math.hypot(cb.x - ca.x, cb.z - ca.z);
+      if (L > 1e-3) {
+        const y0 = Math.min(A.fl, B.fl) - 0.3, y1 = Math.max(A.top, B.top) + 0.05;
+        addBox((ca.x + cb.x) / 2, (y0 + y1) / 2, (ca.z + cb.z) / 2, 0.32, y1 - y0, L + 0.08, Math.atan2(cb.x - ca.x, cb.z - ca.z), { walk: false });
+      }
+      // стойки обшивки
+      if (i % 2 === 0) {
+        const h = A.top - A.fl + 0.18;
+        cyl(M.deadwood, a.x - a.nx * side * 0.05, A.fl + h / 2, a.z - a.nz * side * 0.05, 0.055, 0.05, h, { seg: 6 });
+      }
+    }
+    // ступени для стрельбы со стороны противника
+    if (t.bays && side === enemySide) {
+      for (let s = TW.ramp + 1.5; s < t.len - TW.ramp - 1.5; s += R.range(5.5, 8)) {
+        const q = polyAt(P, s), i = Math.min(n - 2, sArr.findIndex(v => v > s) - 1);
+        if (i < 0 || !V[i].ok || !V[i + 1].ok) continue;
+        const nx = -q.tz, nz = q.tx, fl = floorAt(q.x, q.z);
+        const bx = q.x + nx * side * (TW.wall - 0.17), bz = q.z + nz * side * (TW.wall - 0.17);
+        box(M.planksDark, bx, fl + 0.2, bz, 0.34, 0.42, 1.3, { rot: Math.atan2(q.tx, q.tz), tile: 1, collide: true });
+        if (R() < 0.35) crateAt(q.x - nx * side * 0.2 + q.tx * 1.1, q.z - nz * side * 0.2 + q.tz * 1.1, Math.atan2(q.tx, q.tz), fl);
+      }
+    }
+    // мешки на бруствере со стороны противника
+    if (side === enemySide) {
+      for (let s = 0.8; s < t.len - 0.8; s += 1.15) {
+        if (R() > 0.72) continue;
+        const q = polyAt(P, s), nx = -q.tz, nz = q.tx;
+        const bx = q.x + nx * side * 1.32, bz = q.z + nz * side * 1.32;
+        if (trenchTaper(t, s) < 0.6 || inOtherTrench(ti, bx, bz, 1.2)) continue;
+        const y = terrainH(bx, bz), rot = Math.atan2(q.tx, q.tz) + Math.PI / 2;
+        for (let r = 0; r < 2; r++) for (let k = 0; k < 2; k++) {
+          const off = (k - 0.5) * 0.56 + (r % 2) * 0.28;
+          bag(bx + q.tx * off, y + 0.04 + r * 0.16, bz + q.tz * off, rot + R.range(-0.1, 0.1), 0, R.range(-0.08, 0.08));
+        }
+      }
+    }
+    // занавешенные входы в «лисьи норы» и фонари — на тыльной стенке
+    if (side === -enemySide && t.len > 10) {
+      for (let s = TW.ramp + 2 + R.range(0, 4); s < t.len - TW.ramp - 1; s += R.range(9, 14)) {
+        const q = polyAt(P, s), nx = -q.tz, nz = q.tx, fl = floorAt(q.x, q.z), rot = Math.atan2(q.tx, q.tz);
+        if (inOtherTrench(ti, q.x + nx * side * TW.wall, q.z + nz * side * TW.wall, TW.cap + 0.3)) continue;
+        const wx = q.x + nx * side * (TW.wall - 0.03), wz = q.z + nz * side * (TW.wall - 0.03);
+        if (R() < 0.5) {
+          box(M.dark, wx, fl + 0.7, wz, 0.02, 1.3, 0.85, { rot, tile: 1 });
+          box(M.canvas, wx - nx * side * 0.03, fl + 0.72, wz - nz * side * 0.03, 0.02, 1.25, 0.8, { rot, rz: side * 0.03, tile: 1 });
+          for (const e of [-1, 1]) cyl(M.barkPine, wx + q.tx * e * 0.48, fl + 0.72, wz + q.tz * e * 0.48, 0.07, 0.07, 1.45, { seg: 6 });
+          place(M.barkPine, new THREE.CylinderGeometry(0.07, 0.07, 1.15, 6), wx, fl + 1.46, wz, [0, rot, Math.PI / 2]);
+        }
+        // фонарь: крюк на стойке, часть разбита
+        const lx = q.x + nx * side * (TW.wall - 0.12) + q.tx * 1.4, lz = q.z + nz * side * (TW.wall - 0.12) + q.tz * 1.4;
+        box(M.dark, lx, fl + 1.52, lz, 0.14, 0.2, 0.14, { rot, tile: 1 });
+        place(lanternMat, new THREE.CylinderGeometry(0.05, 0.05, 0.13, 8), lx, fl + 1.5, lz, 0, 1, { cast: false });
+        const on = R() > 0.25;
+        TRENCH_LAMPS.push(addLamp({ kind: 'bulb', x: lx, y: fl + 1.45, z: lz, on, flick: R() < 0.3 ? 0.5 : 0, ground: fl, color: 0xffc47a }));
       }
     }
   }
+  walls.planks.flush(M.planks); walls.planksDark.flush(M.planksDark); walls.deadwood.flush(M.wattle); walls.cap.flush(M.planksDark);
+  // настил-трап: поперечные доски на двух лагах, по аппарелям — ступенями
+  for (let s = 0.4; s < t.len - 0.3; s += 0.31) {
+    if (R() < 0.07) continue;
+    const q = polyAt(P, s), q2 = polyAt(P, Math.min(t.len, s + 0.3));
+    const y = floorAt(q.x, q.z), y2 = floorAt(q2.x, q2.z);
+    box(M.planksDark, q.x, y + 0.06, q.z, 0.95, 0.035, 0.15, { rot: Math.atan2(q.tx, q.tz), rx: -Math.atan2(y2 - y, 0.3), rz: R.range(-0.03, 0.03), tile: 1 });
+  }
+  // колючка перед окопом: колья и три нити, разрывы у троп и деревьев
+  if (t.bays) {
+    const off = 5.5 * enemySide;
+    let prev = null;
+    for (let s = 1; s < t.len; s += 2.6) {
+      const q = polyAt(P, s), x = q.x - q.tz * off + R.range(-0.3, 0.3), z = q.z + q.tx * off + R.range(-0.3, 0.3);
+      if (pathInfluence(x, z, 0.8) > 0 || trenchDist(x, z) < 2.5 || treeFree(x, z) === false) { prev = null; continue; }
+      const y = hFast(x, z);
+      cyl(M.deadwood, x, y + 0.55, z, 0.04, 0.035, 1.1, { seg: 5, rot: [R.range(-0.1, 0.1), 0, R.range(-0.1, 0.1)] });
+      if (prev) for (const hh of [0.25, 0.6, 0.95]) beam(M.wire, V(prev[0], prev[1] + hh, prev[2]), V(x, y + hh + R.range(-0.04, 0.04), z), 0.005, { seg: 3, cast: false });
+      if (prev && R() < 0.5) beam(M.wire, V(prev[0], prev[1] + 0.95, prev[2]), V(x, y + 0.25, z), 0.005, { seg: 3, cast: false });
+      prev = [x, y, z];
+    }
+  }
 }
+function crateAt(x, z, rot, y) {
+  box(M.crate, x, y + 0.2, z, 0.9, 0.36, 0.45, { rot, tile: 0.8, collide: true });
+}
+const treeFree = () => true;
+/** Точка и направление «наружу» у конца окопа. */
+function trenchEnd(t, end) {
+  const P = t.pts, a = end ? P[P.length - 1] : P[0], b = end ? P[P.length - 2] : P[1];
+  const dx = a[0] - b[0], dz = a[1] - b[1], l = Math.hypot(dx, dz);
+  return { x: a[0], z: a[1], ox: dx / l, oz: dz / l };
+}
+const DUGOUTS = [];
 /** Блиндаж: сруб, заглублённый в склон, накат из брёвен, земля сверху. */
 function dugout(x, z, rot, R) {
   const F = frame(x, z, rot), g = terrainH(x, z);
@@ -142,8 +296,14 @@ export function planMilitary() {
     addPad(tx, tz, 2.4, 2.9, L.rot + 0.4, 2);
     addPad(s.x, s.z, 7, 7, L.rot, 6);
   }
-  // блиндажи у левого крыла переднего рубежа
-  for (const sgn of [1, -1]) keep(-85.1 * sgn, 45.5 * sgn, 4);
+  // блиндажи в конце окопов: вход смотрит в окоп, сруб — за аппарелью
+  for (const t of TRENCHES) for (const end of [0, 1]) {
+    if (!(end ? t.dugout1 : t.dugout0)) continue;
+    const e = trenchEnd(t, end), off = 1.8 + 0.9;
+    const x = e.x + e.ox * off, z = e.z + e.oz * off;
+    DUGOUTS.push({ x, z, rot: Math.atan2(-e.ox, -e.oz) });
+    keep(x, z, 3.4);
+  }
   // блокпосты на старых дорогах у минного поля
   for (const sgn of [1, -1]) keep(-62.7 * sgn, -103 * sgn, 5);
   // пулемётные гнёзда
@@ -480,10 +640,15 @@ function checkpoint(x, z, sgn, R) {
 /* ---------- Сборка ---------- */
 export function buildMilitary() {
   const R = rng(1212);
-  for (const t of TRENCHES) buildTrench(t, R);
+  lanternMat = new THREE.MeshStandardMaterial({ color: 0x8d8f8a, emissive: 0xffb45a, emissiveIntensity: 0, roughness: 0.3 });
+  TRENCHES.forEach((t, i) => buildTrench(t, i, R));
+  // пулемётные ячейки в конце сап
+  for (const t of TRENCHES) if (t.nest1) {
+    const e = trenchEnd(t, 1);
+    sandbagRing(e.x + e.ox * 0.4, e.z + e.oz * 0.4, 1.75, 3, Math.atan2(-e.oz, -e.ox), 1.5, R);
+  }
   for (const B of BASE) buildBase(B, R);
-  // вход блиндажа смотрит на конец траншеи
-  for (const sgn of [1, -1]) dugout(-85.1 * sgn, 45.5 * sgn, Math.atan2(0.707 * sgn, -0.707 * sgn), R);
+  for (const d of DUGOUTS) dugout(d.x, d.z, d.rot, R);
   // пулемётные гнёзда: у береговых ячеек (выход — к своей базе) и на подступах к турбазе/кордону
   for (const sgn of [1, -1]) {
     const home = sgn > 0 ? SPAWNS.A : SPAWNS.D;
@@ -495,3 +660,7 @@ export function buildMilitary() {
   buildMinefield(R);
 }
 export const baseInfo = () => BASE;
+/** Фонари в окопах загораются в сумерках вместе с сетью турбазы. */
+export function updateMilitary(sky) {
+  if (lanternMat) lanternMat.emissiveIntensity = sky.lampOn * 2.4;
+}
