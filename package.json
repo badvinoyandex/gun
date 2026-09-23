@@ -1,0 +1,15 @@
+{
+  "name": "tikhiy-bor",
+  "version": "1.0.0",
+  "private": true,
+  "description": "ТИХИЙ БОР — лесная карта для шутера на three.js: окопы, заброшенная турбаза, озеро, минное поле, полный цикл суток",
+  "type": "module",
+  "scripts": {
+    "dev": "python3 -m http.server 8080",
+    "build": "node scripts/build.mjs",
+    "check": "node scripts/check.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0"
+  }
+}
