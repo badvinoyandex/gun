@@ -29,7 +29,7 @@ import { injectStructFX } from '../world/wind.js';
 ============================================================================ */
 const QUEUE = [];
 const BUDGET = () => Math.round(Q.bodies * 0.38 * (1 - PERF.load * 0.6));   // тел обломков на один взрыв; при просадке кадра — меньше
-let bodiesThisBlast = 0;
+let bodiesThisBlast = 0, bodiesThisFrame = 0;
 const _v = new THREE.Vector3(), _q = new THREE.Quaternion(), _up = new THREE.Vector3(0, 1, 0);
 const LOG_GEO = new THREE.CylinderGeometry(0.11, 0.11, 1, 7).rotateZ(Math.PI / 2);
 
@@ -75,7 +75,10 @@ function removePanel(p) {
 }
 function processQueue() {
   let n = 0;
-  for (let i = 0; i < QUEUE.length && n < 6; i++) {
+  // тела обломков создаются порциями: всплеск в один кадр давал рывок 80–100 мс
+  bodiesThisFrame = 0;
+  const perFrame = Math.max(4, Math.round(Q.bodies * 0.1));
+  for (let i = 0; i < QUEUE.length && n < 6 && bodiesThisFrame < perFrame; i++) {
     const e = QUEUE[i];
     if (FRAME.t < e.t) continue;
     QUEUE.splice(i--, 1); n++;
@@ -133,7 +136,7 @@ function debris(p, from, force, fire) {
     ang: new THREE.Vector3(sr(-2, 2), sr(-2, 2), sr(-2, 2)).multiplyScalar(Math.min(3, force * 0.3)), life: p.kind === 'prop' ? 40 : 60, friction: 0.8, restitution: 0.1, damp: [0.1, 0.3],
     float: p.float, rad: Math.min(hs[0], hs[1], hs[2]) / 2, onDone: () => { scene.remove(group); group.traverse(o => o.geometry?.dispose()); },
     sync: (q, r, f) => { group.position.copy(q); group.quaternion.copy(r); if (f < 1) group.scale.setScalar(Math.max(0.01, f)); } });
-  if (b) { bodiesThisBlast++; if (fire && p.burnable) attachFire(b, sr(5, 10)); }
+  if (b) { bodiesThisBlast++; bodiesThisFrame++; if (fire && p.burnable) attachFire(b, sr(5, 10)); }
   else { scene.remove(group); }
 }
 /** Стена рассыпается: брёвна (сруб) или доски, часть — телами, остальное — пыль и щепа. */
@@ -182,7 +185,7 @@ function shatter(p, dir, force, fire, canBody) {
       onDone: () => { scene.remove(mesh); if (!pc.log) mesh.geometry.dispose(); },
       sync: (q, r, f) => { mesh.position.copy(q); mesh.quaternion.copy(r); mesh.scale.copy(sc).multiplyScalar(clamp(f, 0.01, 1)); } });
     if (!b) { scene.remove(mesh); return; }
-    bodiesThisBlast++;
+    bodiesThisBlast++; bodiesThisFrame++;
     if (fire && Math.random() < 0.3) attachFire(b, sr(5, 10));
   });
   const d = camera.position.distanceTo(_v.set(D.x, D.y, D.z));

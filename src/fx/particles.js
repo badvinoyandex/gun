@@ -102,7 +102,7 @@ class Billboards {
     p.age = 0;
     if (p.flame) { p.rot ??= sr(-0.12, 0.12); p.spin ??= 0; p.y += p.size * 0.3; }
     else { p.rot ??= srnd() * TAU; p.spin ??= sr(-0.6, 0.6); }
-    p.cell ??= this.atlas === 'rand' ? (srnd() * 4) | 0 : this.atlas === 'fire' ? (p.flame ? 1 + ((srnd() * 2) | 0) : p.size < 0.12 ? 3 : 0) : -1;
+    p.cell ??= this.atlas === 'rand' ? (srnd() * 4) | 0 : this.atlas === 'fire' ? (p.flame ? (srnd() < 0.45 ? 0 : 1 + ((srnd() * 2) | 0)) : p.size < 0.12 ? 3 : 0) : -1;
     p.seed = srnd();
     if (this.soft && p.gy === undefined) p.gy = hFast(p.x, p.z);
     // пул полон — заменяем самые старые (начало списка), без сдвига массива

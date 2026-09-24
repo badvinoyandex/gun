@@ -388,14 +388,20 @@ function flowerGeo(petal, heart, i) {
   }
   return G.build();
 }
-/** Бурьян: сухие стебли с метёлками — соломенный, к верху светлее. */
+/** Бурьян: тонкие сухие стебли, на верхушке — метёлка из мелких колосков веером. */
 function weedGeo() {
-  const G = new VG(), dry0 = [0.42, 0.36, 0.2], dry1 = [0.7, 0.62, 0.4], seed = [0.55, 0.45, 0.28];
+  const G = new VG(), dry0 = [0.36, 0.3, 0.17], dry1 = [0.62, 0.55, 0.36], seed = [0.5, 0.42, 0.26];
   for (let k = 0; k < 7; k++) {
     const a = hx(k + 50) * TAU, r = hx(k + 60) * 0.12, h = 0.55 + hx(k + 70) * 0.5, lean = 0.1 + hx(k + 80) * 0.2;
     const bx = Math.cos(a) * r, bz = Math.sin(a) * r, tx = bx + Math.cos(a) * lean, tz = bz + Math.sin(a) * lean;
-    G.stem([bx, 0, bz], [tx, h, tz], 0.008, dry0, dry1);
-    for (const rr of [a, a + Math.PI / 2]) { const dx = Math.cos(rr) * 0.035, dz = Math.sin(rr) * 0.035; G.quad([tx - dx, h - 0.16, tz - dz], [tx + dx, h - 0.16, tz + dz], [tx + dx * 0.4, h + 0.03, tz + dz * 0.4], [tx - dx * 0.4, h + 0.03, tz - dz * 0.4], seed, [0.3, 0.8, 0.3]); }
+    G.stem([bx, 0, bz], [tx, h, tz], 0.004, dry0, dry1);
+    for (let j = 0; j < 6; j++) {
+      const y = h - 0.02 - j * 0.035, ba = a + j * 2.4 + hx(k * 7 + j), L = 0.05 + hx(k + j * 3) * 0.04;
+      const px = bx + (tx - bx) * (y / h), pz = bz + (tz - bz) * (y / h);
+      const ex = px + Math.cos(ba) * L, ez = pz + Math.sin(ba) * L, ey = y + L * 0.9;
+      const sx = -Math.sin(ba) * 0.006, sz = Math.cos(ba) * 0.006;
+      G.quad([px - sx, y, pz - sz], [px + sx, y, pz + sz], [ex + sx * 1.6, ey, ez + sz * 1.6], [ex - sx * 1.6, ey, ez - sz * 1.6], seed, [0.3, 0.8, 0.3]);
+    }
   }
   return G.build();
 }

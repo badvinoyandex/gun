@@ -4466,7 +4466,7 @@ var setSplashHandler = (fn) => {
 function buoyancy(dt) {
   const W = MAP.WATER_Y;
   for (const b of PHYS.bodies) {
-    if (!b.body || b.frozen) continue;
+    if (!b.body || b.frozen || !b.body.isActive()) continue;
     const p = b.pos;
     if (p.y > W + b.rad + 0.05 || lakeRho(p.x, p.z) > 1) {
       b.wet = false;
@@ -5832,14 +5832,17 @@ function flowerGeo(petal, heart, i) {
   return G2.build();
 }
 function weedGeo() {
-  const G2 = new VG(), dry0 = [0.42, 0.36, 0.2], dry1 = [0.7, 0.62, 0.4], seed = [0.55, 0.45, 0.28];
+  const G2 = new VG(), dry0 = [0.36, 0.3, 0.17], dry1 = [0.62, 0.55, 0.36], seed = [0.5, 0.42, 0.26];
   for (let k = 0; k < 7; k++) {
     const a = hx(k + 50) * TAU, r = hx(k + 60) * 0.12, h = 0.55 + hx(k + 70) * 0.5, lean = 0.1 + hx(k + 80) * 0.2;
     const bx = Math.cos(a) * r, bz = Math.sin(a) * r, tx = bx + Math.cos(a) * lean, tz = bz + Math.sin(a) * lean;
-    G2.stem([bx, 0, bz], [tx, h, tz], 8e-3, dry0, dry1);
-    for (const rr of [a, a + Math.PI / 2]) {
-      const dx = Math.cos(rr) * 0.035, dz = Math.sin(rr) * 0.035;
-      G2.quad([tx - dx, h - 0.16, tz - dz], [tx + dx, h - 0.16, tz + dz], [tx + dx * 0.4, h + 0.03, tz + dz * 0.4], [tx - dx * 0.4, h + 0.03, tz - dz * 0.4], seed, [0.3, 0.8, 0.3]);
+    G2.stem([bx, 0, bz], [tx, h, tz], 4e-3, dry0, dry1);
+    for (let j = 0; j < 6; j++) {
+      const y = h - 0.02 - j * 0.035, ba = a + j * 2.4 + hx(k * 7 + j), L = 0.05 + hx(k + j * 3) * 0.04;
+      const px = bx + (tx - bx) * (y / h), pz = bz + (tz - bz) * (y / h);
+      const ex = px + Math.cos(ba) * L, ez = pz + Math.sin(ba) * L, ey = y + L * 0.9;
+      const sx = -Math.sin(ba) * 6e-3, sz = Math.cos(ba) * 6e-3;
+      G2.quad([px - sx, y, pz - sz], [px + sx, y, pz + sz], [ex + sx * 1.6, ey, ez + sz * 1.6], [ex - sx * 1.6, ey, ez - sz * 1.6], seed, [0.3, 0.8, 0.3]);
     }
   }
   return G2.build();
@@ -7072,7 +7075,7 @@ var Billboards = class {
       p.rot ??= srnd() * TAU;
       p.spin ??= sr(-0.6, 0.6);
     }
-    p.cell ??= this.atlas === "rand" ? srnd() * 4 | 0 : this.atlas === "fire" ? p.flame ? 1 + (srnd() * 2 | 0) : p.size < 0.12 ? 3 : 0 : -1;
+    p.cell ??= this.atlas === "rand" ? srnd() * 4 | 0 : this.atlas === "fire" ? p.flame ? srnd() < 0.45 ? 0 : 1 + (srnd() * 2 | 0) : p.size < 0.12 ? 3 : 0 : -1;
     p.seed = srnd();
     if (this.soft && p.gy === void 0) p.gy = hFast(p.x, p.z);
     if (this.list.length >= this.max) {
@@ -10325,6 +10328,7 @@ import * as THREE24 from "three";
 var QUEUE = [];
 var BUDGET = () => Math.round(Q.bodies * 0.38 * (1 - PERF.load * 0.6));
 var bodiesThisBlast = 0;
+var bodiesThisFrame = 0;
 var _v3 = new THREE24.Vector3();
 var _q6 = new THREE24.Quaternion();
 var _up4 = new THREE24.Vector3(0, 1, 0);
@@ -10373,7 +10377,9 @@ function removePanel(p) {
 }
 function processQueue() {
   let n2 = 0;
-  for (let i = 0; i < QUEUE.length && n2 < 6; i++) {
+  bodiesThisFrame = 0;
+  const perFrame = Math.max(4, Math.round(Q.bodies * 0.1));
+  for (let i = 0; i < QUEUE.length && n2 < 6 && bodiesThisFrame < perFrame; i++) {
     const e = QUEUE[i];
     if (FRAME.t < e.t) continue;
     QUEUE.splice(i--, 1);
@@ -10457,6 +10463,7 @@ function debris(p, from, force, fire) {
   });
   if (b) {
     bodiesThisBlast++;
+    bodiesThisFrame++;
     if (fire && p.burnable) attachFire(b, sr(5, 10));
   } else {
     scene.remove(group);
@@ -10533,6 +10540,7 @@ function shatter(p, dir2, force, fire, canBody) {
       return;
     }
     bodiesThisBlast++;
+    bodiesThisFrame++;
     if (fire && Math.random() < 0.3) attachFire(b, sr(5, 10));
   });
   const d = camera.position.distanceTo(_v3.set(D.x, D.y, D.z));

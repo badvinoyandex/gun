@@ -259,7 +259,7 @@ export const setSplashHandler = fn => { onSplash = fn; };
 function buoyancy(dt) {
   const W = MAP.WATER_Y;
   for (const b of PHYS.bodies) {
-    if (!b.body || b.frozen) continue;
+    if (!b.body || b.frozen || !b.body.isActive()) continue;
     const p = b.pos;
     if (p.y > W + b.rad + 0.05 || lakeRho(p.x, p.z) > 1) { b.wet = false; continue; }
     const sub = clamp((W - (p.y - b.rad)) / (2 * b.rad), 0, 1);
