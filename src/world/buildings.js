@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 import { scene, Q } from '../core/env.js';
 import { rng, TAU } from '../core/math.js';
-import { addPad, keep, terrainH, CLUSTERS, pathInfluence } from './layout.js';
+import { addPad, keep, terrainH, CLUSTERS, pathInfluence, addDig } from './layout.js';
+import { addDoor, holeCluster } from '../fx/interact.js';
+import { sheet } from './wrecks.js';
 import { M, TEX } from '../gen/materials.js';
 import { box, cyl, place, frame, beginStruct, panel, noPanel, endStruct } from './builders.js';
 import { addBox, addCircle as addCircle2 } from '../core/colliders.js';
@@ -59,8 +61,17 @@ export function house(o) {
     B(M.concrete, lx * 0.96, base + 0.12, lz * 0.96, 0.4, 0.62, 0.4, { tile: 0.8 });
   B(M.planksDark, 0, base + 0.2, d / 2 - 0.05, w, 0.36, 0.06, { tile: 1.2 });
   B(M.planksDark, 0, base + 0.2, -d / 2 + 0.05, w, 0.36, 0.06, { tile: 1.2 });
-  // пол
-  B(M.planksDark, 0, fy - 0.05, 0, w - 0.1, 0.1, d - 0.1, { tile: 1.2, collide: true });
+  // цоколь и с торцов: под дом не заглянуть (там может быть погреб)
+  for (const sx of [-1, 1]) B(M.planksDark, sx * (w / 2 - 0.05), base + 0.2, 0, 0.06, 0.36, d - 0.1, { tile: 1.2 });
+  // пол; над погребом — с люком
+  const C = o.cellar;
+  if (!C) B(M.planksDark, 0, fy - 0.05, 0, w - 0.1, 0.1, d - 0.1, { tile: 1.2, collide: true });
+  else {
+    const X0 = -w / 2 + 0.05, X1 = w / 2 - 0.05, Z0 = -d / 2 + 0.05, Z1 = d / 2 - 0.05;
+    for (const [a0, a1, b0, b1] of [[X0, X1, C.hz1, Z1], [X0, X1, Z0, C.hz0], [X0, C.hx0, C.hz0, C.hz1], [C.hx1, X1, C.hz0, C.hz1]])
+      if (a1 - a0 > 0.02 && b1 - b0 > 0.02) B(M.planksDark, (a0 + a1) / 2, fy - 0.05, (b0 + b1) / 2, a1 - a0, 0.1, b1 - b0, { tile: 1.2, collide: true });
+    cellarRoom(o, C, fy, B, R, F);
+  }
 
   // стены с проёмами
   const openings = { front: [], back: [], left: [], right: [] };
@@ -100,6 +111,12 @@ export function house(o) {
       pn.u0 = u0; pn.u1 = u1; pn.y0 = y0; pn.y1 = y1; pc.pn = pn;
       B(wallMat, lx, fy + (y0 + y1) / 2, lz, u1 - u0, y1 - y0, WALL_T, { r: S2.r, collide: true, walk: false, uvOff: [u0, y0] });
       walls.push(pn); bySide[name].push(pn);
+      // следы перестрелки: очередь по стене снаружи (пропадёт вместе с куском стены)
+      if (R() < (o.camp ? 0.1 : 0.14) && y1 - y0 > 0.8) {
+        const nO = name === 'front' ? [0, 1] : name === 'back' ? [0, -1] : name === 'left' ? [-1, 0] : [1, 0];
+        const [hx, hz] = P(lx + nO[0] * (WALL_T / 2 + 0.004), lz + nO[1] * (WALL_T / 2 + 0.004)), [ox, oz] = P(nO[0], nO[1]);
+        holeCluster(hx, fy + (y0 + y1) / 2 + R.range(-0.2, 0.3), hz, Math.atan2(ox - o.x, oz - o.z), R.int(4, 11), Math.min(0.5, (u1 - u0) * 0.4), o.style === 'log' || !o.camp ? 0 : 2, R);
+      }
     }
     // оформление проёмов: держится на соседних кусках стены
     for (const op of openings[name]) {
@@ -155,11 +172,12 @@ export function house(o) {
         const st = R();
         const [hx, hz] = P(lx - ax * fw / 2 + nOut[0] * 0.05, lz - az * fw / 2 + nOut[1] * 0.05);
         panel('door', { hp: 0.4, density: 450 });
-        if (st < 0.55) {
-          // дверь распахнута на петлях
-          const a = o.rot + S2.r + R.range(0.8, 1.5) * (R() < 0.5 ? 1 : -1);
-          const c = Math.cos(a), s2 = Math.sin(a);
-          box(M.planksDark, hx + c * 0.45, fy + 1.0, hz - s2 * 0.45, 0.9, 2.0, 0.05, { rot: a, tile: 1.2, vertical: true });
+        if (st < 0.62) {
+          // дверь на петлях — открывается и закрывается (E); распахивается наружу
+          const a = o.rot + S2.r, amt = R.range(1.0, 1.7);
+          const [ox, oz] = P(nOut[0], nOut[1]), nwx = ox - o.x, nwz = oz - o.z;
+          const sgn = Math.cos(a + 1) * nwx - Math.sin(a + 1) * nwz > 0 ? 1 : -1;
+          addDoor({ hx, hz, y: fy + 0.01, closed: a, openBy: sgn * amt, w: 0.9, h: 2.0, mat: M.planksDark, startOpen: R() < 0.6 });
         } else if (st < 0.8) {
           // сорвана и лежит у крыльца
           const [x, z] = P(lx + nOut[0] * 1.6, lz + nOut[1] * 1.6);
@@ -282,6 +300,64 @@ export function house(o) {
   return S;
 }
 
+/* ---------- Погреб / подвал ----------
+   Яма под полом (рельеф вынут в плане), кирпичные или дощатые стены, пол из
+   досок, крутая лестница из люка. Внутри тусклая лампочка, полки, бочки;
+   в подвале турбазы — штаб: нары, стол с рацией, карта и позывные на стене. */
+function cellarRoom(o, C, fy, B, R, F) {
+  const bottom = o.pad.y - C.depth, fl = bottom + 0.12, ceil = fy - 0.1;
+  const cx = (C.rx0 + C.rx1) / 2, cz = (C.rz0 + C.rz1) / 2, rw = C.rx1 - C.rx0, rd = C.rz1 - C.rz0, hh = ceil - fl;
+  const wmat = C.kind === 'basement' ? M.brick : M.planksDark, tile = C.kind === 'basement' ? 0.6 : 1.2;
+  B(M.planksDark, cx, fl - 0.05, cz, rw, 0.1, rd, { tile: 1.2, collide: true });
+  for (const [lx, lz, sx, sz] of [[cx, C.rz0 - 0.1, rw + 0.4, 0.2], [cx, C.rz1 + 0.1, rw + 0.4, 0.2], [C.rx0 - 0.1, cz, 0.2, rd], [C.rx1 + 0.1, cz, 0.2, rd]])
+    B(wmat, lx, fl + hh / 2, lz, sx, hh, sz, { tile, collide: true, walk: false, vertical: wmat !== M.brick });
+  // балки перекрытия и столбы
+  for (let x = C.rx0 + 0.6; x < C.rx1; x += 1.2) B(M.planksDark, x, ceil - 0.09, cz, 0.14, 0.16, rd, { tile: 1 });
+  if (C.kind === 'basement') for (const x of [cx - rw * 0.22, cx + rw * 0.22]) B(M.brick, x, fl + hh / 2, cz - 0.4, 0.38, hh, 0.38, { tile: 0.6, collide: true, walk: false });
+  // лестница: марш вниз вдоль −z из люка
+  const n = C.steps, rise = (fy - fl) / n, run = C.run;
+  const sx = (C.hx0 + C.hx1) / 2, sw = C.hx1 - C.hx0 - 0.06;
+  for (let k = 0; k < n; k++) {
+    const top = fy - rise * (k + 1), z = C.hz1 - run * (k + 0.5);
+    B(M.planks, sx, top - 0.03, z, sw, 0.06, run + 0.02, { tile: 1, collide: true });
+  }
+  for (const e of [-1, 1]) {
+    const x = sx + e * (sw / 2 + 0.03), L = run * n, zc = C.hz1 - L / 2, yc = (fy + fl) / 2 - 0.1;
+    const [wx, wz] = F.p(x, zc);
+    box(M.planksDark, wx, yc, wz, 0.05, 0.22, Math.hypot(L, fy - fl), { rot: o.rot, rx: -Math.atan2(fy - fl, L), tile: 1 });
+  }
+  // крышка люка откинута на пол
+  B(M.planksDark, sx + sw / 2 + 0.55, fy + 0.03, (C.hz0 + C.hz1) / 2, 0.85, 0.05, C.hz1 - C.hz0, { tile: 1, rz: 0.12 });
+  // обстановка
+  const shelves = (x, z) => {
+    for (let k = 0; k < 3; k++) B(M.planks, x, fl + 0.5 + k * 0.55, z, 0.4, 0.04, 1.6, { tile: 1 });
+    for (const e of [-0.75, 0.75]) B(M.planksDark, x, fl + 0.8, z + e, 0.05, 1.6, 0.05, { tile: 1 });
+    for (let k = 0; k < 7; k++) { const [jx, jz] = F.p(x + R.range(-0.12, 0.12), z + R.range(-0.7, 0.7)); cyl(M.glass, jx, fl + 0.6 + R.int(0, 2) * 0.55, jz, 0.05, 0.05, 0.16, { seg: 8 }); }
+  };
+  shelves(C.rx0 + 0.25, cz - rd * 0.2);
+  for (let k = 0; k < 3; k++) { const [bx, bz] = F.p(C.rx0 + 0.45 + k * 0.62, C.rz0 + 0.45); cyl(M.planksDark, bx, fl + 0.4, bz, 0.26, 0.26, 0.8, { seg: 12, tile: 1 }); cyl(M.rust, bx, fl + 0.62, bz, 0.27, 0.27, 0.04, { seg: 12 }); }
+  const [lx, lz] = F.p(cx, cz);
+  addLamp({ kind: 'bulb', x: lx, y: ceil - 0.35, z: lz, flick: 0.45, on: true, ground: fl, power: 3.5, range: 7 });
+  place(M.lampGlass, new THREE.SphereGeometry(0.05, 8, 6), lx, ceil - 0.32, lz, 0);
+  cyl(M.dark, lx, ceil - 0.18, lz, 0.004, 0.004, 0.3, { seg: 3 });
+  if (C.kind === 'basement') {
+    // штаб: стол с рацией и картой, нары, позывные на стене
+    const tx = C.rx1 - 1.2, tz = cz + 1.0;
+    B(M.planks, tx, fl + 0.74, tz, 1.4, 0.05, 0.8, { tile: 1, collide: true });
+    for (const [a, b] of [[-0.62, -0.32], [0.62, -0.32], [-0.62, 0.32], [0.62, 0.32]]) B(M.planksDark, tx + a, fl + 0.37, tz + b, 0.06, 0.72, 0.06, { tile: 1 });
+    B(M.olive, tx + 0.35, fl + 0.9, tz - 0.1, 0.4, 0.26, 0.3, { tile: 1 });
+    const [ax, az] = F.p(tx + 0.45, tz - 0.1); cyl(M.dark, ax, fl + 1.3, az, 0.006, 0.006, 0.6, { seg: 3 });
+    const [mx, mz] = F.p(tx - 0.3, tz); sheet(3, mx, fl + 0.77, mz, o.rot + 0.2, { flat: true, w: 0.42, h: 0.56 });
+    for (let k = 0; k < 3; k++) { const [px, pz] = F.p(C.rx1 - 0.005, cz - 1.2 + k * 0.4); sheet(k, px, fl + 1.35 + (k % 2) * 0.12, pz, o.rot - Math.PI / 2); }
+    for (const y2 of [0.45, 1.3]) B(M.planks, C.rx0 + 1.9, fl + y2, C.rz1 - 0.45, 1.9, 0.06, 0.75, { tile: 1, collide: y2 < 1 });
+    B(M.canvas, C.rx0 + 1.9, fl + 0.5, C.rz1 - 0.45, 1.8, 0.05, 0.7, { tile: 1 });
+    B(M.crate, cx + 0.3, fl + 0.2, C.rz0 + 0.35, 1.0, 0.4, 0.55, { tile: 0.8, collide: true });
+  } else {
+    const [px, pz] = F.p(C.rx1 - 0.005, cz); sheet(1, px, fl + 1.3, pz, o.rot - Math.PI / 2);
+    B(M.sack, C.rx1 - 0.5, fl + 0.22, C.rz0 + 0.5, 0.7, 0.45, 0.5, { tile: 1 });
+    B(M.sack, C.rx1 - 0.6, fl + 0.6, C.rz0 + 0.5, 0.6, 0.35, 0.45, { tile: 1, r: 0.3 });
+  }
+}
 /** Стол, лавки, кровать, мусор на полу. */
 function furnish(o, R, F, fy, B) {
   const { w, d } = o;
@@ -308,7 +384,9 @@ function furnish(o, R, F, fy, B) {
   // доски и обломки
   noPanel();
   for (let i = 0; i < 4; i++) {
-    B(M.planksDark, R.range(-w * 0.35, w * 0.35), fy + 0.04, R.range(-d * 0.35, d * 0.35), R.range(0.8, 1.8), 0.03, 0.14, { r: R.range(0, TAU), rz: R.range(-0.08, 0.08), tile: 1 });
+    const px = R.range(-w * 0.35, w * 0.35), pz = R.range(-d * 0.35, d * 0.35), L = R.range(0.8, 1.8);
+    if (o.cellar && px > o.cellar.hx0 - 1 && px < o.cellar.hx1 + 1 && pz > o.cellar.hz0 - 1 && pz < o.cellar.hz1 + 1) continue;
+    B(M.planksDark, px, fy + 0.04, pz, L, 0.03, 0.14, { r: R.range(0, TAU), rz: R.range(-0.08, 0.08), tile: 1 });
   }
 }
 
@@ -377,6 +455,7 @@ function sawShed(x, z, rot) {
 /* ---------- План кластеров ---------- */
 const T_PLAN = [
   { kind: 'house', id: 'lodge', x: -68, z: -60, faceT: true, w: 12, d: 7, style: 'paint', roof: 'tar', porch: true, stove: [3.8, -1.8],
+    cellar: { kind: 'basement', rx0: -4.9, rx1: 3.0, rz0: -2.4, rz1: 2.4, hx0: -4.9, hx1: -4.0, hz0: -1.45, hz1: 1.0, depth: 2.35, steps: 10, run: 0.27 },
     windows: [{ side: 'front', at: -4 }, { side: 'front', at: -1.8 }, { side: 'front', at: 2.4 }, { side: 'front', at: 4.4 }, { side: 'back', at: -3 }, { side: 'back', at: 3 }, { side: 'left', at: 0 }],
     door: { side: 'front', at: 0.3 }, door2: { side: 'right', at: 1.5 }, damage: 0.35, sign: true, glow: [-3.2, 1.8], alt: { style: 'log', roof: 'rust' } },
   { kind: 'house', id: 'cabin1', x: -46, z: -74, faceT: true, w: 4.6, d: 5.4, style: 'plank', roof: 'rust', stove: [-1.2, -1.6],
@@ -418,6 +497,11 @@ export function planBuildings() {
   planCamp(ITEMS.filter(it => it.kind.startsWith('camp')));
   for (const it of ITEMS) {
     if (it.kind === 'house') it.pad = addPad(it.x, it.z, it.w / 2 + 0.6, it.d / 2 + (it.porch ? 2.4 : 1.2), it.rot, 3);
+    // погреб: яма под полом, чуть шире комнаты — откосы прячутся за стенами
+    if (it.kind === 'house' && it.cellar) {
+      const C = it.cellar, lx = (C.rx0 + C.rx1) / 2, lz = (C.rz0 + C.rz1) / 2, c = Math.cos(it.rot), s = Math.sin(it.rot);
+      addDig({ x: it.x + lx * c + lz * s, z: it.z - lx * s + lz * c, hw: (C.rx1 - C.rx0) / 2 + 0.3, hd: (C.rz1 - C.rz0) / 2 + 0.3, rot: it.rot, depth: C.depth, pad: it.pad });
+    }
     else if (it.kind === 'bus' || it.kind === 'truck') keep(it.x, it.z, 4.2);
     else if (it.kind === 'saw') it.pad = addPad(it.x, it.z, 4.2, 2.6, it.rot, 2.5);
     else if (!it.kind.startsWith('camp')) keep(it.x, it.z, it.kind === 'woodpile' ? 2 : 1.3);

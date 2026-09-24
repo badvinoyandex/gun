@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 import { scene, FRAME } from '../core/env.js';
 import { rng, TAU, clamp } from '../core/math.js';
-import { MAP, lakeContour, isFree, keep, edgeDist, terrainH, terrainNormal, SPAWNS, CLUSTERS, trenchDist, lakeRho, inCamp, PADS, KEEPOUT, TW, padRectDist } from './layout.js';
+import { MAP, lakeContour, isFree, keep, edgeDist, terrainH, terrainNormal, SPAWNS, CLUSTERS, trenchDist, lakeRho, inCamp, PADS, KEEPOUT, TW, padRectDist, streamAt, inBog } from './layout.js';
 import { hFast } from './heightcache.js';
 import { M } from '../gen/materials.js';
-import { place, box, cyl } from './builders.js';
+import { place, box, cyl, beam } from './builders.js';
 import { addBox, addCircle } from '../core/colliders.js';
 import { vehicle } from './vehicles.js';
 import { PHYS, addBody } from '../core/physics.js';
@@ -30,7 +30,7 @@ export function carFree(x, z, rot, L, W) {
   const c = Math.cos(rot), s = Math.sin(rot);
   for (const [a, b] of [[0, 0], [-W / 2, -L / 2], [W / 2, -L / 2], [-W / 2, L / 2], [W / 2, L / 2], [0, -L / 2], [0, L / 2]]) {
     const px = x + a * c + b * s, pz = z - a * s + b * c;
-    if (trenchDist(px, pz) < TW.cap + 0.7 || lakeRho(px, pz) < 1.12 || inCamp(px, pz, 1)) return false;
+    if (trenchDist(px, pz) < TW.cap + 0.7 || lakeRho(px, pz) < 1.12 || inCamp(px, pz, 1) || streamAt(px, pz).d < 6 || inBog(px, pz) > 0) return false;
     for (const p of PADS) if (padRectDist(p, px, pz) < 0.6) return false;
     for (const k of KEEPOUT) if ((k.x - px) ** 2 + (k.z - pz) ** 2 < (k.r + 0.3) ** 2) return false;
   }
@@ -190,12 +190,58 @@ function fallenLog(x, z, rot, L, r, R) {
   }
   addBox(x, y + r * 0.8, z, r * 1.8, r * 1.8, L, rot);
 }
-function stump(x, z, R) {
-  const y = hFast(x, z), r = R.range(0.2, 0.42), h = R.range(0.3, 0.8);
-  cyl(M.barkSpruce, x, y + h / 2 - 0.05, z, r * 1.25, r, h, { seg: 8 });
-  place(M.logEnd, new THREE.CircleGeometry(r * 0.95, 9), x, y + h - 0.04, z, [-Math.PI / 2 + R.range(-0.2, 0.2), 0, R.range(-0.2, 0.2)]);
+/** Пень: неровный ствол с корой (мох у земли, серый налёт у спила), косой спил с
+    годовыми кольцами или расщеплённый облом, корни-лапы уходят в землю, у старых —
+    трутовики. o.sawn — спилен пилой (лагерь), иначе — старый, часто обломан. */
+export function makeStump(x, z, R, o = {}) {
+  const y = hFast(x, z) - 0.06, r = o.r ?? R.range(0.2, 0.42), h = o.h ?? R.range(0.3, 0.8), sawn = o.sawn ?? R() < 0.6;
+  const bark = o.bark ?? (R() < 0.5 ? M.barkPine : M.barkSpruce);
+  const g = new THREE.CylinderGeometry(r, r * 1.3, h, 12, 3);
+  const pa = g.attributes.position, col = new Float32Array(pa.count * 3);
+  const ta = R() * TAU, tilt = sawn ? R.range(0.05, 0.16) : 0, tx = Math.cos(ta), tz = Math.sin(ta);
+  for (let i = 0; i < pa.count; i++) {
+    let vx = pa.getX(i), vy = pa.getY(i), vz = pa.getZ(i);
+    const a = Math.atan2(vz, vx), k = 1 + 0.09 * Math.sin(a * 3 + r * 10) + 0.05 * Math.sin(a * 7);
+    const t = (vy + h / 2) / h;
+    vx *= k * (1 + (1 - t) * (1 - t) * 0.25); vz *= k * (1 + (1 - t) * (1 - t) * 0.25);
+    if (t > 0.99) vy += (vx * tx + vz * tz) * tilt;
+    pa.setXYZ(i, vx, vy, vz);
+    const moss = (1 - t) * (0.5 + 0.5 * Math.max(0, Math.sin(a - 1))), grey = t * 0.25;
+    col[i * 3] = 1 - moss * 0.45 + grey * 0.2; col[i * 3 + 1] = 1 - moss * 0.1 + grey * 0.2; col[i * 3 + 2] = 1 - moss * 0.6 + grey * 0.25;
+  }
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3)); g.computeVertexNormals();
+  place(bark, g, x, y + h / 2, z, 0);
+  if (sawn) {
+    const cap = new THREE.CircleGeometry(r * 1.02, 14);
+    cap.rotateX(-Math.PI / 2);
+    const cp = cap.attributes.position;
+    for (let i = 0; i < cp.count; i++) cp.setY(i, (cp.getX(i) * tx + cp.getZ(i) * tz) * tilt);
+    cap.computeVertexNormals();
+    place(M.stumpTop, cap, x, y + h + 0.003, z, 0);
+  } else {
+    // облом: щепа торчит зубцами, светлая древесина
+    const sp = new THREE.ConeGeometry(r * 0.95, r * 1.4, 9, 1, true), sa = sp.attributes.position;
+    for (let i = 0; i < sa.count; i++) if (sa.getY(i) > 0) sa.setXYZ(i, sa.getX(i) + R.range(-0.08, 0.08), sa.getY(i) * R.range(0.4, 1.3), sa.getZ(i) + R.range(-0.08, 0.08));
+    sp.computeVertexNormals();
+    place(M.logEnd, sp, x, y + h + r * 0.5, z, [R.range(-0.2, 0.2), R() * TAU, R.range(-0.2, 0.2)]);
+    place(M.stumpTop, new THREE.CircleGeometry(r * 0.98, 12), x, y + h - 0.01, z, [-Math.PI / 2, 0, 0]);
+  }
+  // корни-лапы
+  const nr = 4 + R.int(0, 2);
+  for (let i = 0; i < nr; i++) {
+    const a = i / nr * TAU + R.range(-0.3, 0.3), L = R.range(0.45, 0.9);
+    const a0 = new THREE.Vector3(x + Math.cos(a) * r * 0.9, y + 0.18, z + Math.sin(a) * r * 0.9), b0 = new THREE.Vector3(x + Math.cos(a) * (r + L), hFast(x + Math.cos(a) * (r + L), z + Math.sin(a) * (r + L)) - 0.08, z + Math.sin(a) * (r + L));
+    beam(bark, a0, b0, r * 0.32, { r1: 0.025, seg: 6 });
+  }
+  // трутовики на старых
+  if (!sawn || R() < 0.3) for (let i = 0; i < 2 + R.int(0, 2); i++) {
+    const a = R() * TAU, fy2 = y + R.range(0.15, h * 0.85), fr = R.range(0.06, 0.12);
+    const fg = new THREE.CylinderGeometry(fr, fr * 0.8, 0.035, 10, 1, false, 0, Math.PI);
+    place(M.logEnd, fg, x + Math.cos(a) * r * 1.05, fy2, z + Math.sin(a) * r * 1.05, [0, -a + Math.PI / 2, 0]);
+  }
   addCircle(x, z, r * 1.2, y, y + h);
 }
+function stump(x, z, R) { makeStump(x, z, R); }
 function boulder(x, z, s, R) {
   const g = new THREE.IcosahedronGeometry(1, 2);
   const p = g.attributes.position, col = new Float32Array(p.count * 3);

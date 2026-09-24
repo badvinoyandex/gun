@@ -64,7 +64,7 @@ export function buildMaterials() {
   M.planksPaint = surf(TX.planks([88, 104, 90]), { rough: 0.9 });   // выцветшая зелёная краска турбазы
   M.logWall = surf(TX.logWall(), { rough: 0.95, nscale: 1.3 });
   M.logEnd = std({ color: 0x8a7458, roughness: 0.95 });
-  M.roofRust = surf(TX.corrugated([92, 96, 90], 1.0), { rough: 0.7, metal: 0.35, extra: { side: THREE.DoubleSide } });
+  M.roofRust = surf(TX.corrugated([88, 92, 86], 0.7, 1), { rough: 0.7, metal: 0.35, extra: { side: THREE.DoubleSide } });
   M.roofTar = surf(TX.rustMetal([42, 42, 40], 0.05), { rough: 0.95, extra: { side: THREE.DoubleSide } });
   M.concrete = surf(TX.rustMetal([122, 120, 114], 0.12), { rough: 0.95, nscale: 0.6 });
   M.brick = std({ color: 0x7e4a36, roughness: 0.95 });
@@ -110,7 +110,7 @@ export function buildMaterials() {
   M.planksCamp = surf(TX.planks([92, 118, 128]), { rough: 0.9 });
   M.planksWhite = surf(TX.planks([176, 172, 158]), { rough: 0.88 });
   M.planksCream = surf(TX.planks([150, 132, 96]), { rough: 0.9 });
-  M.roofCamp = surf(TX.corrugated([96, 104, 96], 1.2), { rough: 0.72, metal: 0.35, extra: { side: THREE.DoubleSide } });
+  M.roofCamp = surf(TX.corrugated([88, 102, 96], 0.55, 1), { rough: 0.72, metal: 0.35, extra: { side: THREE.DoubleSide } });
   M.plaster = std({ color: 0xb4b0a4, roughness: 0.97 });
   M.paintRed = surf(TX.rustMetal([140, 44, 36], 0.9, 256), { rough: 0.65, metal: 0.3 });
   M.steelPipe = surf(TX.rustMetal([110, 116, 112], 1.1, 256), { rough: 0.6, metal: 0.55 });
@@ -125,7 +125,28 @@ export function buildMaterials() {
   M.signCabin = [1, 2, 3, 4, 5, 6].map(n => sign(TX.campSign([`ОТРЯД ${n}`], { w: 256, h: 96, bg: '#e2dccb', fg: '#2c4f6e', sizes: [58] })));
   M.wolf = sign(TX.wolfBadge());
   M.flagRag = std({ color: 0x8e2a22, roughness: 0.95, side: THREE.DoubleSide });
+  // --- наполнение карты: вышки, мосты, обломки фронта, записки ---
+  M.stumpTop = std({ map: TX.stumpTop(), roughness: 0.95 });
+  M.holes = std({ map: TX.bulletHoles(), transparent: true, depthWrite: false, roughness: 0.9, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+  M.paper = [
+    ['#ПОЗЫВНЫЕ', 'Берёза-1 — КП', 'Гром — миномёт', 'Сокол — птичка (дрон)', 'Ветер-2 — лев. фланг', 'Ветер-3 — прав. фланг', 'Лесник — разведка', 'Кедр — эвакуация', '', 'не путать Ветер с Вепрем!'],
+    ['#СВЯЗЬ', 'осн. 146.500', 'зап. 147.225', 'шифр. таблица — у ст.', '', '#ПАРОЛЬ', 'ЗВЕЗДА — отзыв МАЯК', 'с 00:00 — ИВОЛГА /', '                     КОСТЁР'],
+    ['#ОРИЕНТИРЫ', '1 — вышка (пожарная)', '2 — водокачка лагеря', '3 — сгоревшая БМП', '4 — остров, беседка', '5 — мост (заминир.?)'],
+    ['#СХЕМА', 'наши —', 'они — >', 'X — пулемёт']
+  ].map((l, i) => std({ map: TX.paperSheet(l, { grid: i === 3, sketch: i === 3, bg: i === 1 ? '#e2dcc6' : undefined, ink: i === 2 ? '#2a2a2a' : undefined }), roughness: 0.9, side: THREE.DoubleSide }));
+  M.towerSteel = surf(TX.rustMetal([88, 98, 90], 0.55, 256), { rough: 0.62, metal: 0.55 });
+  M.towerRed = surf(TX.rustMetal([150, 58, 44], 0.45, 256), { rough: 0.6, metal: 0.45 });
+  M.tankCamp = surf(TX.rustMetal([96, 130, 150], 0.5), { rough: 0.55, metal: 0.5 });
+  M.tankGrey = surf(TX.rustMetal([104, 112, 104], 0.6), { rough: 0.55, metal: 0.5 });
+  M.grate = std({ color: 0x3f403c, roughness: 0.6, metalness: 0.6 });
+  M.armor = surf(TX.rustMetal([66, 72, 50], 0.35), { rough: 0.7, metal: 0.4 });
+  M.armorBurnt = surf(TX.rustMetal([46, 38, 32], 1.3), { rough: 0.85, metal: 0.3 });
+  M.heli = surf(TX.rustMetal([78, 88, 64], 0.35), { rough: 0.62, metal: 0.35 });
+  M.heliBelly = surf(TX.rustMetal([120, 136, 140], 0.3), { rough: 0.6, metal: 0.35 });
+  M.brass = std({ color: 0xb08a3c, roughness: 0.35, metalness: 0.9 });
+  M.olive = std({ color: 0x4a5236, roughness: 0.6, metalness: 0.3 });
+  M.peat = new THREE.MeshStandardMaterial({ color: 0x1b1a10, roughness: 0.12, metalness: 0.15, transparent: true, opacity: 0.92, depthWrite: true });
   // обугливание и дрожь от взрывов — для всего, что строится из досок, брёвен, жести
   for (const m of [M.planks, M.planksDark, M.planksPaint, M.logWall, M.logEnd, M.roofRust, M.roofTar, M.deadwood, M.crate, M.wattle, M.sack, M.canvas,
-    M.brick, M.concrete, M.planksCamp, M.planksWhite, M.planksCream, M.roofCamp, M.plaster, M.paintRed, M.steelPipe, M.barkLog, M.rust, M.burnt, M.dark, ...M.carPaint]) injectStructFX(m);
+    M.brick, M.concrete, M.planksCamp, M.planksWhite, M.planksCream, M.roofCamp, M.plaster, M.paintRed, M.steelPipe, M.barkLog, M.rust, M.burnt, M.dark, ...M.carPaint, M.towerSteel, M.towerRed, M.tankCamp, M.tankGrey, M.grate, M.armor, M.armorBurnt, M.heli, M.heliBelly, M.stumpTop, M.stone]) injectStructFX(m);
 }

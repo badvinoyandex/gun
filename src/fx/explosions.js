@@ -19,7 +19,7 @@ import { blastKnock } from '../game/player.js';
    осколки грунта с отскоком, дым, воронка-декаль, ударная волна по траве,
    деревьям, флагам и бочкам, встряска камеры, звук с задержкой.
 ============================================================================ */
-export const BLAST = { shake: 0, flash: null, craters: [], debris: null, chunks: [], last: null };
+export const BLAST = { shake: 0, flash: null, craters: [], debris: null, chunks: [], last: null, hooks: [] };
 
 export function buildExplosions() {
   BLAST.flash = new THREE.PointLight(0xffb070, 0, 60, 1.6);
@@ -58,6 +58,7 @@ export function explode(x, y, z, kind = 'pmn') {
   const water = lakeRho(x, z) < 0.98 && y < MAP.WATER_Y + 0.6;
   const gy = water ? MAP.WATER_Y : terrainH(x, z);
   BLAST.last = { x, y: gy, z, t: FRAME.t, size };
+  for (const f of BLAST.hooks) f(x, gy, z, size);
   // вспышка
   BLAST.flash.position.set(x, gy + 1.5, z);
   BLAST.flash.intensity = 520 * size;

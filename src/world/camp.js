@@ -10,6 +10,7 @@ import { bench } from './lamps.js';
 import { vehicle } from './vehicles.js';
 import { makeCloth } from './cloth.js';
 import { treeNear } from './forest.js';
+import { makeStump } from './props.js';
 
 /* ============================================================================
    ПИОНЕРСКИЙ ЛАГЕРЬ «ВОЛЧОНОК»
@@ -39,10 +40,11 @@ export function campHouses() {
   {
     const [x, z] = campXZ(0, -12.2);
     H.push({ kind: 'house', id: 'dining', camp: true, x, z, rot: FACE_LAKE, w: 12, d: 7, h: 2.9, style: 'camp', wallMat: M.planksCream, trimMat: M.planksWhite,
-      roofMat: M.roofCamp, roof: 'rust', seed: 777, damage: 0.35, pitch: 0.42, stove: [4.2, -2.2],
+      roofMat: M.roofCamp, roof: 'rust', seed: 777, damage: 0.35, pitch: 0.42, stove: [4.3, -2.65],
       windows: [{ side: 'front', at: -4.4, w: 1.2 }, { side: 'front', at: -2.4, w: 1.2 }, { side: 'front', at: 2.4, w: 1.2 }, { side: 'front', at: 4.4, w: 1.2 },
         { side: 'back', at: -3.5, w: 1.2 }, { side: 'back', at: 0, w: 1.2 }, { side: 'left', at: 0, w: 1.2 }, { side: 'right', at: 1, w: 1.2 }],
-      door: { side: 'front', at: 0 }, door2: { side: 'back', at: 3 }, furnish: diningFurnish, decor: (o, R, F, fy) => signOver(o, F, fy, M.signDining, 0, 3.2, 0.8) });
+      door: { side: 'front', at: 0 }, door2: { side: 'back', at: 3 }, furnish: diningFurnish, decor: (o, R, F, fy) => signOver(o, F, fy, M.signDining, 0, 3.2, 0.8),
+      cellar: { kind: 'cellar', rx0: 0.9, rx1: 4.8, rz0: -2.4, rz1: 1.4, hx0: 3.9, hx1: 4.8, hz0: -1.65, hz1: 0.9, depth: 2.3, steps: 11, run: 0.27 } });
   }
   {
     const [x, z] = campXZ(-18, -16.4);
@@ -130,6 +132,7 @@ function cabinFurnish(o, R, F, fy, B) {
 function diningFurnish(o, R, F, fy, B) {
   const { w, d } = o;
   for (let row = 0; row < 2; row++) for (let i = 0; i < 3; i++) {
+    if (o.cellar && row === 0 && i === 2) continue;           // здесь люк в погреб
     const lx = -w / 2 + 2.2 + i * 3.4, lz = -0.8 + row * 2.2;
     panel('prop', { hp: 0.4, density: 450 });
     if (R() < 0.3) B(M.planksCream, lx, fy + 0.38, lz, 2.4, 0.75, 0.05, { tile: 1, r: R.range(-0.4, 0.4), collide: true, walk: false });
@@ -361,10 +364,7 @@ function stumps(R) {
   for (let i = 0; i < 140 && n < 16; i++) {
     const [x, z] = campXZ(R.range(CAMP.r0 + 1, CAMP.r1 - 1), R.range(CAMP.f0 + 1, CAMP.f1 - 1));
     if (!isFree(x, z, 0.6, { pathPad: 0.3, trenchPad: 1 }) || treeNear(x, z, 1)) continue;
-    const y = hFast(x, z), r = R.range(0.22, 0.4), h = R.range(0.25, 0.55);
-    cyl(M.barkLog, x, y + h / 2 - 0.05, z, r * 1.2, r, h, { seg: 8 });
-    place(M.logEnd, new THREE.CircleGeometry(r * 0.95, 9), x, y + h - 0.04, z, [-Math.PI / 2, 0, 0]);
-    addCircle(x, z, r * 1.1, y, y + h);
+    makeStump(x, z, R, { r: R.range(0.22, 0.4), h: R.range(0.25, 0.55), sawn: true, bark: M.barkPine });
     n++;
   }
 }

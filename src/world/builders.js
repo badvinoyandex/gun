@@ -35,6 +35,16 @@ export function panel(kind, o = {}) {
   CAPTURE.list = PANEL.cols; CAPTURE.panel = PANEL;
   return PANEL;
 }
+/** Отдельный (не объединённый) меш как часть панели — для подвижного (двери):
+    для обломков запоминается геометрия в мировых координатах. */
+export function attachMesh(mesh) {
+  if (!PANEL) return;
+  mesh.updateMatrixWorld(true);
+  PANEL.parts.push({ mat: mesh.material, geo: mesh.geometry.clone().applyMatrix4(mesh.matrixWorld) });
+  PANEL.mesh = mesh;
+}
+export const curPanel = () => PANEL;
+export const inStruct = () => !!CUR;
 /** Геометрия вне панели (фундамент, печь) — неразрушаемая часть постройки. */
 export function noPanel() { PANEL = null; CAPTURE.list = null; CAPTURE.panel = null; }
 export function endStruct() {

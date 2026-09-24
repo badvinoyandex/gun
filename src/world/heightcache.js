@@ -1,4 +1,4 @@
-import { terrainH, lakeRho, pathInfluence, trenchDist, edgeDist, MAP, SPAWNS } from './layout.js';
+import { terrainH, lakeRho, pathInfluence, trenchDist, edgeDist, MAP, SPAWNS, streamAt, STREAM_BW, inBog } from './layout.js';
 import { forestDensity } from './forest.js';
 import { smoothstep, clamp } from '../core/math.js';
 
@@ -44,6 +44,10 @@ function grassDensityExact(x, z) {
   const edge = pathInfluence(x, z, 1.6) > 0 ? 0.35 : 0;
   const td = trenchDist(x, z);
   if (td < 1.2) return 0;
+  // вода ручья и окна болота — без травы (там осока и рогоз, они свои)
+  if (streamAt(x, z).d < STREAM_BW + 0.25) return 0;
+  const bog = inBog(x, z);
+  if (bog > 0.55) return 0.12;
   let d = (1 - (FD ? forestFast(x, z) : forestDensity(x, z))) * 0.85 + 0.12 + edge;
   d += (1 - smoothstep(1.05, 1.6, rho)) * 0.6;
   const e = edgeDist(x, z);

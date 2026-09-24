@@ -13,6 +13,9 @@ import { windUniforms } from '../world/wind.js';
 import { addRipple } from '../world/lake.js';
 import { FX } from '../fx/particles.js';
 import { sr } from '../core/math.js';
+import { ladderAt, ladderAlive } from './ladders.js';
+import { clang, squelch } from '../fx/audio.js';
+import { inBog, streamAt } from '../world/layout.js';
 
 /* ============================================================================
    ИГРОК: дрон-призрак и пеший режим
@@ -30,7 +33,7 @@ export const PL = {
   pos: new THREE.Vector3(), vel: new THREE.Vector3(), yaw: 0, pitch: -0.2, roll: 0,
   speed: 12, onGround: false, crouch: 0, eye: 1.68, bob: 0, bobAmp: 0, step: 0,
   dead: 0, deathMsg: '', light: false, swim: false, agl: 0, jumpLock: false,
-  cine: null, lastDrop: -9, burn: 0, under: false, air: 1, wadePrev: false
+  cine: null, lastDrop: -9, burn: 0, under: false, air: 1, wadePrev: false, ladder: null, rung: 0, bog: 0, sinkEye: 0
 };
 export const keys = {};
 const SENS = 0.0021;
@@ -42,7 +45,7 @@ export function spawnAt(team, mode = PL.mode) {
   PL.yaw = s.yaw; PL.pitch = mode === 'drone' ? -0.22 : -0.03;
   if (mode === 'drone') PL.pos.set(s.x - s.fx * 10, terrainH(s.x, s.z) + 16, s.z - s.fz * 10);
   else PL.pos.set(s.x + s.fx * 2, terrainH(s.x, s.z) + 0.05, s.z + s.fz * 2);
-  PL.dead = 0; PL.air = 1; PL.under = false;
+  PL.dead = 0; PL.air = 1; PL.under = false; PL.ladder = null;
 }
 export function setMode(mode) {
   if (mode === PL.mode) return;
@@ -248,14 +251,69 @@ export function splashAt(x, z, k = 1) {
   for (let i = 0; i < 14 * k; i++) FX.alpha.spawn({ x: x + sr(-0.3, 0.3), y: MAP.WATER_Y + 0.05, z: z + sr(-0.3, 0.3), vx: sr(-1.2, 1.2) * k, vy: sr(1.5, 4) * k, vz: sr(-1.2, 1.2) * k, size: sr(0.08, 0.2), grow: 0.3, life: sr(0.5, 1), col: [0.72, 0.78, 0.8], a: 0.6, grav: 9.8, floor: MAP.WATER_Y });
   splashSound(k);
 }
+/* ---------- Лестницы ---------- */
+function climb(dt, iz, boost) {
+  const L = PL.ladder;
+  if (!ladderAlive(L)) { PL.ladder = null; PL.onGround = false; return; }
+  if (keys.Space && !PL.jumpLock) {
+    // спрыгнуть: оттолкнуться от лестницы назад
+    PL.ladder = null; PL.jumpLock = true;
+    PL.vel.set(L.nx * 2.6, 2.2, L.nz * 2.6);
+    return;
+  }
+  if (!keys.Space) PL.jumpLock = false;
+  const sp = boost > 1 ? 3.1 : 2.2, up = iz;
+  const y0 = PL.pos.y;
+  PL.pos.y += up * sp * dt;
+  // держимся у ступеней: в полуметре от плоскости, вдоль — как висели
+  const dx = PL.pos.x - L.x, dz = PL.pos.z - L.z, along = Math.max(-L.w / 2, Math.min(L.w / 2, dx * L.nz - dz * L.nx));
+  PL.pos.x += (L.x + L.nx * 0.42 + L.nz * along - PL.pos.x) * Math.min(1, dt * 12);
+  PL.pos.z += (L.z + L.nz * 0.42 - L.nx * along - PL.pos.z) * Math.min(1, dt * 12);
+  PL.vel.set(0, 0, 0); PL.onGround = false;
+  // перекладины через 0.3 м — лязг под руками
+  if (Math.floor(PL.pos.y / 0.3) !== Math.floor(y0 / 0.3)) { clang(L.metal === false ? 0.4 : 1); PL.bob = Math.sin(PL.pos.y * 10) * 0.02; }
+  if (PL.pos.y >= L.y1 - 0.05 && up > 0) {
+    // наверху — шаг на площадку
+    PL.pos.set(L.exit[0], L.exit[1], L.exit[2]); PL.ladder = null; PL.onGround = true;
+  } else if (PL.pos.y <= L.y0 && up < 0) {
+    PL.pos.y = L.y0; PL.ladder = null; PL.onGround = true;
+  }
+}
+function tryGrab() {
+  const L = ladderAt(PL.pos, PL.onGround ? 0.75 : 0.9);
+  if (!L) return false;
+  const facing = -(fwd.x * L.nx + fwd.z * L.nz);
+  // снизу: идём на лестницу лицом к ней; сверху: падаем мимо края — хватаемся
+  const fromBelow = PL.onGround && keys.KeyW && facing > 0.3 && PL.pos.y < L.y1 - 0.4;
+  const catchFall = !PL.onGround && PL.vel.y < -0.8 && PL.pos.y > L.y0 + 0.4 && PL.pos.y < L.y1 + 0.2;
+  if (!fromBelow && !catchFall) return false;
+  PL.ladder = L; PL.vel.set(0, 0, 0);
+  if (catchFall) PL.pos.y = Math.min(PL.pos.y, L.y1 - 0.6);
+  return true;
+}
 function updateWalk(dt, ix, iz, boost) {
-  const water = lakeRho(PL.pos.x, PL.pos.z) < 1.0 ? MAP.WATER_Y : -1e9;
+  if (PL.ladder || (!PL.swim && tryGrab())) { climb(dt, iz, boost); return; }
+  // на мосту, мостках и камнях брода над водой — не плывём и не бредём
+  const deck = supportTop(PL.pos.x, PL.pos.z, 0.3, PL.pos.y + 0.1, 0.5);
+  const onDeck = deck > MAP.WATER_Y - 0.05 && PL.pos.y > deck - 0.35;
+  const water = lakeRho(PL.pos.x, PL.pos.z) < 1.0 && !onDeck ? MAP.WATER_Y : -1e9;
   const depth = water - terrainH(PL.pos.x, PL.pos.z);
   PL.swim = depth > 1.25;
   const wantCrouch = keys.KeyC || keys.ControlLeft;
   PL.crouch = lerp(PL.crouch, wantCrouch && !PL.swim ? 1 : 0, Math.min(1, dt * 10));
   const wade = depth > 0.35 && !PL.swim ? 0.55 : 1;
-  const sp = (PL.swim ? 1.4 : 3.6 * (boost > 1 ? 1.75 : boost < 1 ? 0.45 : 1)) * lerp(1, 0.45, PL.crouch) * wade;
+  // болото вязнет, в ручье по щиколотку — чуть медленнее; ноги проваливаются
+  // на гати и на камнях брода — не вязнем
+  const onSup = supportTop(PL.pos.x, PL.pos.z, 0.3, PL.pos.y + 0.05, 0.3) > terrainH(PL.pos.x, PL.pos.z) + 0.03 && PL.pos.y > terrainH(PL.pos.x, PL.pos.z) + 0.03;
+  PL.bog = onSup ? 0 : inBog(PL.pos.x, PL.pos.z);
+  const sq = streamAt(PL.pos.x, PL.pos.z), inStream = sq.d < 1.3 && PL.pos.y < sq.water + 0.1;
+  const mire = PL.bog > 0.3 ? lerp(1, 0.48, PL.bog) : inStream ? 0.8 : 1;
+  PL.sinkEye = lerp(PL.sinkEye, PL.onGround ? (PL.bog > 0.3 ? 0.16 * PL.bog : inStream ? 0.08 : 0) : 0, Math.min(1, dt * 4));
+  if ((PL.bog > 0.3 || inStream) && PL.onGround && Math.random() < dt * 3 * clamp(Math.hypot(PL.vel.x, PL.vel.z) / 2, 0, 1)) {
+    squelch(0.8);
+    if (inStream) { for (let i = 0; i < 3; i++) FX.alpha.spawn({ x: PL.pos.x + sr(-0.3, 0.3), y: sq.water, z: PL.pos.z + sr(-0.3, 0.3), vx: sr(-0.6, 0.6), vy: sr(0.6, 1.6), vz: sr(-0.6, 0.6), size: 0.06, grow: 0.2, life: 0.5, col: [0.7, 0.75, 0.78], a: 0.5, grav: 9.8, floor: sq.water }); }
+  }
+  const sp = (PL.swim ? 1.4 : 3.6 * (boost > 1 ? 1.75 : boost < 1 ? 0.45 : 1)) * lerp(1, 0.45, PL.crouch) * wade * mire;
   tmp.set(0, 0, 0).addScaledVector(fwd, iz * sp).addScaledVector(right, ix * sp);
   const acc = PL.onGround || PL.swim ? 12 : 2.5;
   PL.vel.x += (tmp.x - PL.vel.x) * Math.min(1, acc * dt);
@@ -336,7 +394,7 @@ function updateCine(dt) {
 }
 function applyCamera(dt) {
   const drone = PL.mode === 'drone';
-  const eye = drone ? 0 : (PL.swim ? 1.5 : lerp(PL.eye, 1.02, PL.crouch) + PL.bob);
+  const eye = drone ? 0 : (PL.swim ? 1.5 : lerp(PL.eye, 1.02, PL.crouch) + PL.bob - PL.sinkEye);
   camera.position.set(PL.pos.x, PL.pos.y + eye, PL.pos.z);
   // зависание дрона: едва заметный дрейф
   if (drone && !PL.cine) {

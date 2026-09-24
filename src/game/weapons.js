@@ -11,8 +11,10 @@ import { splinters } from '../fx/destruction.js';
 import { explode } from '../fx/explosions.js';
 import { shotSound, whistleSound } from '../fx/audio.js';
 import { M } from '../gen/materials.js';
-import { hitPanel } from '../fx/structures.js';
+import { hitPanel, sagPanel } from '../fx/structures.js';
 import { PL } from './player.js';
+import { shootLamps, addHole, addLeak } from '../fx/interact.js';
+import { scareBirds } from '../world/birds.js';
 
 /* ============================================================================
    ОРУЖИЕ ДЛЯ ПРОВЕРКИ ФИЗИКИ
@@ -61,13 +63,29 @@ export function shoot() {
   const tp = tracer.geometry.attributes.position;
   tp.setXYZ(0, _a.x + _dir.x * 1.5, _a.y + _dir.y * 1.5 - 0.05, _a.z + _dir.z * 1.5); tp.setXYZ(1, end.x, end.y, end.z); tp.needsUpdate = true;
   tracer.material.opacity = 0.7; tracerT = 0.06;
+  scareBirds(camera.position.x, camera.position.y, camera.position.z, 75, 0.9);
+  if (shootLamps(_a, _dir, p ? _a.distanceTo(p) : 500)) return;
   if (!p) return;
   if (h && h.idx <= -1000) { const pane = paneByIndex(h.idx); if (pane) breakPane(pane, _dir.clone(), 2.5, p); return; }
   if (h && h.body) { impulse(h.body, _dir.x * 6, _dir.y * 6, _dir.z * 6, p.x - h.body.pos.x, p.y - h.body.pos.y, p.z - h.body.pos.z); sparks(p, n, [2.2, 1.8, 1.2]); return; }
   const c = h && h.idx >= 0 ? COLLIDERS[h.idx] : null;
-  if (c && c.panel) { hitPanel(c.panel, p, _dir.clone(), c.panel.kind === 'wall' ? 0.05 : 0.12); return; }
-  if (c && c.tree) { splinters(p.x, p.y, p.z, n, 3, M.logEnd, 0.18); puff(p, n, [0.35, 0.26, 0.18], 4); return; }
-  if (c) { puff(p, n, [0.4, 0.36, 0.3], 5); sparks(p, n, [2, 1.6, 1]); return; }
+  // пробоина остаётся: дерево, металл, бетон; бак водокачки начинает течь
+  // стенка из мешков: мнётся ближайший к попаданию мешок
+  if (c && c.sandWall) {
+    let best = null, bd = 1e9;
+    for (const q of c.sandWall.bags) if (!q.dead) { const d = q.center.distanceToSquared(p); if (d < bd) { bd = d; best = q; } }
+    if (best) sagPanel(best, 0.24, p, _dir.clone());
+    return;
+  }
+  if (c && c.leak) { addLeak(p, n, c.leak); sparks(p, n, [2, 1.6, 1]); return; }
+  if (c && c.panel) {
+    const pk = c.panel, sk = pk.s?.kind;
+    if (pk.kind !== 'door' && pk.mode !== 'sag' && pk.kind !== 'wire') addHole(p, n, sk === 'tower' || sk === 'generator' ? 1 : sk === 'gate' ? 2 : 0, pk);
+    hitPanel(pk, p, _dir.clone(), pk.kind === 'wall' ? 0.05 : 0.12);
+    return;
+  }
+  if (c && c.tree) { addHole(p, n, 0, null); splinters(p.x, p.y, p.z, n, 3, M.logEnd, 0.18); puff(p, n, [0.35, 0.26, 0.18], 4); return; }
+  if (c) { if (!c.wire) addHole(p, n, c.car ? 1 : 2, null); puff(p, n, [0.4, 0.36, 0.3], 5); sparks(p, n, [2, 1.6, 1]); return; }
   // земля или вода
   if (lakeRho(p.x, p.z) < 0.98 && p.y < MAP.WATER_Y + 0.2) { for (let i = 0; i < 8; i++) FX.alpha.spawn({ x: p.x, y: MAP.WATER_Y, z: p.z, vx: sr(-0.4, 0.4), vy: sr(2, 4), vz: sr(-0.4, 0.4), size: 0.15, grow: 0.4, life: 0.8, col: [0.7, 0.75, 0.78], a: 0.5, grav: 9.8 }); return; }
   puff(p, n, [0.3, 0.24, 0.18], 7);

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { scene, camera, Q, NO_REFLECT } from '../core/env.js';
-import { rng, hash2, TAU, lerp } from '../core/math.js';
+import { rng, hash2, TAU, lerp, vnoise, smoothstep } from '../core/math.js';
 import { MAP, isFree, lakeRho, edgeDist } from './layout.js';
 import { hFast, grassDensity, forestFast } from './heightcache.js';
 import { treeNear, saplingGeo } from './forest.js';
@@ -85,6 +85,8 @@ function tuftGeo(blades = Q.tex > 0.9 ? 14 : 11, segs = Q.tex > 0.6 ? 4 : 3) {
   g.computeBoundingSphere();
   return g;
 }
+/** Пятна выгоревшей травы на открытых местах: трава не одним кислотным цветом. */
+const dryPatch = (x, z) => 0.75 * smoothstep(0.5, 0.78, vnoise(x * 0.045 + 11, z * 0.045 - 7)) + 0.25 * smoothstep(0.55, 0.8, vnoise(x * 0.17 - 3, z * 0.17 + 5));
 export const TUFTS = { im: null, center: new THREE.Vector2(1e9, 1e9), count: 0, R: 12 };
 export function buildGrass() {
   injectWind(M.grass, { amp: 0.16, stiff: 1.6, refH: 0.8, flutter: 0.04, trample: true, blast: 1.4, burn: true });
@@ -96,8 +98,8 @@ export function buildGrass() {
   NO_REFLECT.push(im);
   GRASS.im = im;
   // ближний слой: геометрические травинки вокруг игрока
-  M.blades = new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.78, metalness: 0, color: 0x6f8a4a });
-  M.blades.emissive = new THREE.Color(0x0a1206);
+  M.blades = new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.8, metalness: 0, color: 0x6c7f48 });
+  M.blades.emissive = new THREE.Color(0x080e05);
   injectWind(M.blades, { amp: 0.14, stiff: 1.5, refH: 0.6, flutter: 0.05, trample: true, blast: 1.5, burn: true });
   TUFTS.R = Math.round(9 + 7 * Q.tex);
   const n = Q.tufts === false ? 1 : Math.round(Q.grass * 0.28);
@@ -131,8 +133,8 @@ function refreshTufts(force, cx, cz) {
     const sc = lerp(0.7, 1.35, hash2(i + 3, j + 7)) * tall;
     _p.set(x, hFast(x, z) - 0.02, z); _q.setFromAxisAngle(_up, h1 * TAU); _s.set(sc, sc * lerp(0.75, 1.25, h2), sc);
     im.setMatrixAt(n, _m.compose(_p, _q, _s));
-    const dry = tall > 1.4 ? 0.5 : (1 - forestFast(x, z)) * 0.25, v = lerp(0.85, 1.15, h3);
-    _c.setRGB(v * lerp(0.95, 1.3, dry), v * lerp(1.0, 0.95, dry), v * lerp(0.95, 0.65, dry));
+    const dry = Math.max(tall > 1.4 ? 0.5 : (1 - forestFast(x, z)) * 0.25, dryPatch(x, z)), v = lerp(0.85, 1.12, h3);
+    _c.setRGB(v * lerp(0.93, 1.32, dry), v * lerp(0.93, 0.95, dry), v * lerp(0.86, 0.62, dry));
     im.setColorAt(n, _c);
     n++;
   }
@@ -176,9 +178,9 @@ export function refreshGrass(force) {
     _s.set(sc, sc * lerp(0.7, 1.2, h2), sc);
     _m.compose(_p, _q, _s);
     im.setMatrixAt(n, _m);
-    const dry = tall > 1.5 ? 0.55 : (1 - forestFast(x, z)) * 0.25;
-    const v = lerp(0.8, 1.15, h3);
-    _c.setRGB(v * lerp(0.85, 1.25, dry), v * lerp(0.95, 1.0, dry), v * lerp(0.8, 0.6, dry));
+    const dry = Math.max(tall > 1.5 ? 0.55 : (1 - forestFast(x, z)) * 0.25, dryPatch(x, z));
+    const v = lerp(0.8, 1.1, h3);
+    _c.setRGB(v * lerp(0.88, 1.28, dry), v * lerp(0.9, 0.96, dry), v * lerp(0.76, 0.58, dry));
     im.setColorAt(n, _c);
     n++;
   }
@@ -196,6 +198,9 @@ export function refreshGrass(force) {
    одинаковом числе на всех пресетах — никто не получает преимущества в обзоре. */
 const TILE = 64;
 export const FLORA = { tiles: [], drawn: 0 };
+/** Кусты по ячейкам 4 м — для птиц: ломишься через куст, взлетает стая. */
+export const BUSHES = new Map();
+export const bushNear = (x, z, r = 1.1) => { for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) { const L = BUSHES.get((Math.floor(x / 4) + i) * 4096 + Math.floor(z / 4) + j); if (L) for (const [bx, bz, bs] of L) if ((bx - x) ** 2 + (bz - z) ** 2 < (r * bs) ** 2) return true; } return false; };
 function scatter(R, count, mat, geo, test, scale, tint, o = {}) {
   const buckets = new Map();
   let placed = 0;
@@ -204,7 +209,9 @@ function scatter(R, count, mat, geo, test, scale, tint, o = {}) {
     if (!test(x, z)) continue;
     const key = Math.floor(x / TILE) * 64 + Math.floor(z / TILE);
     if (!buckets.has(key)) buckets.set(key, []);
-    buckets.get(key).push([x, z, R.range(scale[0], scale[1]), R.range(0, TAU), R.range(0.8, 1.15), R.range(0.75, 1.15)]);
+    const rec = [x, z, R.range(scale[0], scale[1]), R.range(0, TAU), R.range(0.8, 1.15), R.range(0.75, 1.15)];
+    buckets.get(key).push(rec);
+    if (o.record) { const k2 = Math.floor(x / 4) * 4096 + Math.floor(z / 4); if (!BUSHES.has(k2)) BUSHES.set(k2, []); BUSHES.get(k2).push([x, z, rec[2]]); }
     placed++;
   }
   for (const pts of buckets.values()) {
@@ -284,7 +291,7 @@ function buildFlora(R) {
     const d = forestFast(x, z), rho = lakeRho(x, z);
     const edge = d > 0.25 && d < 0.7 ? 0.5 : 0.08, shore = rho > 1.05 && rho < 1.45 ? 0.7 : 0;
     return R() < Math.max(edge, shore) && isFree(x, z, 1.0, { pathPad: 0.8, trenchPad: 1.4 }) && !treeNear(x, z, 1.1) && edgeDist(x, z) < MAP.PLAY - 2;
-  }, [0.8, 1.5], (x, z, v) => lakeRho(x, z) < 1.5 ? [0.72, 0.86, 0.6] : [0.86, 0.95, 0.66], { name: 'bushes', sink: 0.1 });
+  }, [0.8, 1.5], (x, z, v) => lakeRho(x, z) < 1.5 ? [0.72, 0.86, 0.6] : [0.86, 0.95, 0.66], { name: 'bushes', sink: 0.1, record: true });
 
   const fl = Q.flora;
   const light = (x, z) => 1 - forestFast(x, z);

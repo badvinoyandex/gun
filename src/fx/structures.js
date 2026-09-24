@@ -1,9 +1,12 @@
 import * as THREE from 'three';
+import * as BGU from 'three/addons/utils/BufferGeometryUtils.js';
 import { scene, camera, FRAME, Q, PERF } from '../core/env.js';
 import { clamp, lerp, sr, srnd, TAU } from '../core/math.js';
 import { STRUCTS, collapsePanel, uvBox } from '../world/builders.js';
 import { hFast } from '../world/heightcache.js';
-import { PHYS, addBody, removeStaticCollider, freezeBody } from '../core/physics.js';
+import { PHYS, addBody, removeStaticCollider, addStaticCollider, freezeBody, isSleeping } from '../core/physics.js';
+import { addBox } from '../core/colliders.js';
+import { BLAST } from './explosions.js';
 import { M } from '../gen/materials.js';
 import { FX } from './particles.js';
 import { PANES, breakPane } from './glass.js';
@@ -46,18 +49,21 @@ export function blastStructs(x, y, z, size) {
       const d = p.box.distanceToPoint(_v);
       if (d > R) continue;
       const dmg = size * 1.5 / Math.pow(0.6 + d, 1.45);
+      if (p.mode === 'sag') { sagPanel(p, dmg * 0.9, _v); continue; }
       p.hp -= dmg * sr(0.8, 1.2);
       if (p.hp <= 0) { kill(p, _v, Math.min(14, 7 * size / (0.8 + d * 0.5)), 0); any = true; }
     }
     if (any) s.shake = 1;
     // пыль и труха с кровли даже без разрушений
-    if (s.center.distanceTo(_v) < R) dustFrom(s, 10);
+    if (!s.quiet && s.center.distanceTo(_v) < R) dustFrom(s, 10);
     if (Math.random() < 0.6 * (1 - WEATHER.wet) && s.center.distanceTo(_v) < 3.5 + 2.5 * size + s.radius * 0.5 && size >= 0.8) igniteStruct(s, 0.3);
   }
 }
 /** Точечное попадание (пуля) в панель: дверь, доска, стекло — копится урон. */
 export function hitPanel(p, point, dir, dmg = 0.08) {
   if (!p || p.dead) return;
+  if (p.mode === 'sag') { sagPanel(p, 0.24, point, dir); return; }
+  if (p.onHit) p.onHit(p, point, dir);
   p.hp -= dmg;
   splinterPuff(point, dir);
   if (p.hp <= 0) kill(p, point.clone().addScaledVector(dir, -1), 3, 0);
@@ -68,8 +74,21 @@ function kill(p, from, force, delay) {
   QUEUE.push({ p, from: from.clone(), force, t: FRAME.t + delay });
 }
 /** Снять панель: геометрия схлопывается, коллайдеры гасятся, стёкла на ней бьются. */
+let onGone = null;
+/** Кто-то хранит привязанное к панели (пробоины): уведомляем, когда она исчезла. */
+export const setPanelGoneHandler = fn => { onGone = fn; };
 function removePanel(p) {
+  // подвижная деталь (дверь) — отдельный меш: запекаем текущее положение в обломок
+  if (p.mesh) {
+    p.mesh.updateMatrixWorld(true);
+    const g = p.mesh.geometry.clone().applyMatrix4(p.mesh.matrixWorld);
+    g.computeBoundingBox();
+    p.parts = [{ mat: p.mesh.material, geo: g }];
+    p.box = g.boundingBox.clone(); p.center = p.box.getCenter(new THREE.Vector3());
+    p.mesh.parent?.remove(p.mesh);
+  }
   collapsePanel(p);
+  if (onGone) onGone(p);
   for (const c of p.cols) { c.dead = true; removeStaticCollider(c); }
   for (const pane of PANES) if (pane.panel === p && pane.alive) breakPane(pane, new THREE.Vector3(sr(-1, 1), 0.3, sr(-1, 1)).normalize(), 2);
 }
@@ -84,6 +103,7 @@ function processQueue() {
     QUEUE.splice(i--, 1); n++;
     removePanel(e.p);
     debris(e.p, e.from, e.force, e.fire);
+    if (e.p.onKill) e.p.onKill(e.p);
     supportPass(e.p.s);
   }
 }
@@ -94,7 +114,16 @@ function supportPass(s) {
     const L = p.sup.list;
     if (!L.length) continue;
     const alive = L.filter(q => !q.dead).length / L.length;
-    if (alive < p.sup.frac) kill(p, _v.copy(p.center).add(new THREE.Vector3(0, 2, 0)), 0.5, sr(0.05, 0.45));
+    if (alive < p.sup.frac) {
+      // высокая конструкция валится в сторону выбитых опор
+      if (p.big) {
+        const d = new THREE.Vector3();
+        for (const q of L) if (q.dead) d.add(q.center);
+        d.divideScalar(Math.max(1, L.filter(q => q.dead).length)).sub(p.center); d.y = 0;
+        p.topple = d.lengthSq() > 1e-4 ? d.normalize() : new THREE.Vector3(1, 0, 0);
+      }
+      kill(p, _v.copy(p.center).add(new THREE.Vector3(0, 2, 0)), 0.5, p.big ? 0.12 : sr(0.05, 0.45));
+    }
   }
 }
 
@@ -109,34 +138,46 @@ function localBox(p, rot) {
   return b;
 }
 function debris(p, from, force, fire) {
-  const s = p.s, canBody = PHYS.ready && bodiesThisBlast < BUDGET();
+  const s = p.s, canBody = PHYS.ready && (bodiesThisBlast < BUDGET() || p.big);
   const dir = new THREE.Vector3().subVectors(p.center, from); dir.y = Math.max(dir.y, 0.2); dir.normalize();
-  dustAt(p.center, p.box, p.kind === 'roof' ? 6 : 10, fire);
+  if (!p.quiet) dustAt(p.center, p.box, p.big ? 30 : p.kind === 'roof' ? 6 : 10, fire);
   if (p.mode === 'none' || p.mode === 'dust') return;
   if (p.mode === 'shatter' && p.dims) return shatter(p, dir, force, fire, canBody);
   if (!canBody || !p.parts.length) return;
   // целиком: геометрия панели становится телом
   const rot = s.rot ?? 0, lb = localBox(p, rot), size = lb.getSize(new THREE.Vector3()), mid = lb.getCenter(new THREE.Vector3());
-  if (size.x * size.y * size.z > 60) return;
+  if (size.x * size.y * size.z > 60 && !p.big) return;
   const qInv = new THREE.Quaternion().setFromAxisAngle(_up, -rot);
   const group = new THREE.Group();
   const byMat = new Map();
   for (const part of p.parts) { if (!byMat.has(part.mat)) byMat.set(part.mat, []); byMat.get(part.mat).push(part.geo); }
-  for (const [mat, geos] of byMat) for (const g0 of geos) {
-    const g = g0.clone().translate(-p.center.x, -p.center.y, -p.center.z).applyQuaternion(qInv).translate(-mid.x, -mid.y, -mid.z);
-    const m = new THREE.Mesh(g, mat); m.castShadow = true; m.receiveShadow = true;
-    group.add(m);
+  for (const [mat, geos] of byMat) {
+    // много деталей (вышка) — одним мешем на материал, иначе сотни вызовов отрисовки
+    const list = geos.length > 6 ? [BGU.mergeGeometries(geos, false) || geos[0]] : geos;
+    for (const g0 of list) {
+      const g = g0.clone().translate(-p.center.x, -p.center.y, -p.center.z).applyQuaternion(qInv).translate(-mid.x, -mid.y, -mid.z);
+      const m = new THREE.Mesh(g, mat); m.castShadow = true; m.receiveShadow = true;
+      group.add(m);
+    }
   }
   const pos = p.center.clone().add(mid.clone().applyQuaternion(_q.setFromAxisAngle(_up, rot)));
   group.position.copy(pos); group.quaternion.setFromAxisAngle(_up, rot);
   scene.add(group);
   const hs = [Math.max(0.04, size.x), Math.max(0.04, size.y), Math.max(0.04, size.z)];
-  const mass = clamp(hs[0] * hs[1] * hs[2] * p.density * 0.5, 2, 400);
-  const b = addBody({ shape: 'box', size: hs, mass, pos, quat: group.quaternion, vel: dir.clone().multiplyScalar(force * sr(0.5, 1.1)).add(new THREE.Vector3(0, force * 0.2, 0)),
-    ang: new THREE.Vector3(sr(-2, 2), sr(-2, 2), sr(-2, 2)).multiplyScalar(Math.min(3, force * 0.3)), life: p.kind === 'prop' ? 40 : 60, friction: 0.8, restitution: 0.1, damp: [0.1, 0.3],
+  const mass = p.big ? 2500 : clamp(hs[0] * hs[1] * hs[2] * p.density * 0.5, 2, 400);
+  // вышка: не разлетается, а кренится вокруг основания в сторону выбитой опоры
+  const tp = p.topple;
+  const vel = p.big ? new THREE.Vector3(tp.x * 0.6, -0.2, tp.z * 0.6) : dir.clone().multiplyScalar(force * sr(0.5, 1.1)).add(new THREE.Vector3(0, force * 0.2, 0));
+  const ang = p.big ? new THREE.Vector3(tp.z, 0, -tp.x).multiplyScalar(0.28) : new THREE.Vector3(sr(-2, 2), sr(-2, 2), sr(-2, 2)).multiplyScalar(Math.min(3, force * 0.3));
+  const b = addBody({ shape: 'box', size: hs, mass, pos, quat: group.quaternion, vel, keep: !!p.big,
+    ang, life: p.kind === 'prop' ? 40 : 60, friction: 0.8, restitution: 0.1, damp: [0.1, 0.3],
     float: p.float, rad: Math.min(hs[0], hs[1], hs[2]) / 2, onDone: () => { scene.remove(group); group.traverse(o => o.geometry?.dispose()); },
     sync: (q, r, f) => { group.position.copy(q); group.quaternion.copy(r); if (f < 1) group.scale.setScalar(Math.max(0.01, f)); } });
-  if (b) { bodiesThisBlast++; bodiesThisFrame++; if (fire && p.burnable) attachFire(b, sr(5, 10)); }
+  if (b) {
+    bodiesThisBlast++; bodiesThisFrame++;
+    if (fire && p.burnable) attachFire(b, sr(5, 10));
+    if (p.big) { TOPPLED.push({ b, group, p, age: 0, hs }); woodCrack(camera.position.distanceTo(pos), 0, 1.5); }
+  }
   else { scene.remove(group); }
 }
 /** Стена рассыпается: брёвна (сруб) или доски, часть — телами, остальное — пыль и щепа. */
@@ -203,6 +244,73 @@ function dustAt(c, box, n, fire) {
 function dustFrom(s, n) {
   for (let i = 0; i < n; i++) FX.alpha.spawn({ x: s.center.x + sr(-1, 1) * s.w * 0.5, y: s.fy + s.h + sr(0, 1), z: s.center.z + sr(-1, 1) * s.d * 0.5, vx: sr(-0.5, 0.5), vy: sr(-0.8, 0), vz: sr(-0.5, 0.5),
     size: sr(0.3, 0.8), grow: 1, life: sr(1.5, 3), col: [0.5, 0.46, 0.4], a: 0.3, drag: 1.2, windK: 0.6 });
+}
+
+/* ---------- Рухнувшие вышки ----------
+   Пока падает — тело физики; легла — становится статикой, а для игрока вдоль неё
+   встаёт вытянутый коллайдер: через упавшую вышку надо перелезать или обходить. */
+const TOPPLED = [];
+function updateToppled(dt) {
+  for (let i = TOPPLED.length - 1; i >= 0; i--) {
+    const t = TOPPLED[i];
+    t.age += dt;
+    if (!t.b.body) { TOPPLED.splice(i, 1); continue; }
+    // удар о землю — пыль и треск
+    if (!t.hit && t.age > 0.6 && t.b.pos.y < hFast(t.b.pos.x, t.b.pos.z) + Math.min(t.hs[0], t.hs[2]) * 0.8) {
+      t.hit = true; BLAST.shake = Math.max(BLAST.shake, 0.5 / (1 + camera.position.distanceTo(t.b.pos) / 40));
+      for (let k = 0; k < 30; k++) { const s2 = sr(-0.5, 0.5) * t.hs[1]; const up = new THREE.Vector3(0, 1, 0).applyQuaternion(t.b.quat); FX.alpha.spawn({ x: t.b.pos.x + up.x * s2 + sr(-1, 1), y: hFast(t.b.pos.x, t.b.pos.z) + 0.3, z: t.b.pos.z + up.z * s2 + sr(-1, 1), vx: sr(-1.5, 1.5), vy: sr(0.3, 1.2), vz: sr(-1.5, 1.5), size: sr(1, 2.2), grow: 1.4, life: sr(3, 6), col: [0.44, 0.4, 0.34], a: 0.4, drag: 1.2, windK: 0.8 }); }
+      woodCrack(camera.position.distanceTo(t.b.pos), 0, 2);
+    }
+    if (t.age > 2 && (isSleeping(t.b) || t.age > 18)) {
+      freezeBody(t.b);
+      const up = new THREE.Vector3(0, 1, 0).applyQuaternion(t.b.quat);
+      const yaw = Math.atan2(up.x, up.z), L = t.hs[1], w = Math.max(t.hs[0], t.hs[2]);
+      const c = addBox(t.b.pos.x, t.b.pos.y, t.b.pos.z, w * 0.8, Math.min(t.hs[0], t.hs[2]) * 0.9, L * Math.hypot(up.x, up.z) + w * 0.5, yaw, { walk: true });
+      c.dyn = true;
+      TOPPLED.splice(i, 1);
+    }
+  }
+}
+
+/* ---------- Мешки с песком ----------
+   Попадание не разрушает мешок, а мнёт его: мешок оседает и расплывается, из
+   дыры сыплется песок; укрытие ниже — у стенки опускается коллайдер. Близкий
+   разрыв сносит мешки совсем. */
+const _o = new THREE.Vector3();
+export function sagPanel(p, amt, point, dir) {
+  if (p.dead) return;
+  p.sag = Math.min(1, (p.sag || 0) + amt * sr(0.7, 1.2));
+  if (point) for (let i = 0; i < 6; i++) FX.dirt.spawn({ x: point.x, y: point.y, z: point.z, vx: (dir ? -dir.x : 0) * sr(0.3, 1.2) + sr(-0.4, 0.4), vy: sr(-0.5, 0.6), vz: (dir ? -dir.z : 0) * sr(0.3, 1.2) + sr(-0.4, 0.4), size: sr(0.02, 0.05), life: 1.4, col: [0.5, 0.44, 0.3], a: 0.95, grav: 9.8, floor: hFast(point.x, point.z) });
+  if (point) FX.alpha.spawn({ x: point.x, y: point.y, z: point.z, vx: 0, vy: 0.2, vz: 0, size: 0.25, grow: 0.8, life: 1.2, col: [0.55, 0.5, 0.38], a: 0.35, drag: 2 });
+  if (p.sag >= 1 && amt > 0.5) { kill(p, point || p.center, 1, 0); p.wall && updateWall(p.wall); return; }
+  // деформация прямо в общем буфере: высота мешка сжимается к его низу, бока расползаются
+  for (const r of p.ranges) {
+    const pos = r.mesh.geometry.attributes.position, a = pos.array, i0 = r.start * 3, n = r.count * 3;
+    if (!r.orig) {
+      r.orig = a.slice(i0, i0 + n);
+      let lo = 1e9, cx = 0, cz = 0;
+      for (let i = 0; i < n; i += 3) { lo = Math.min(lo, r.orig[i + 1]); cx += r.orig[i]; cz += r.orig[i + 2]; }
+      r.lo = lo; r.cx = cx / (n / 3); r.cz = cz / (n / 3);
+    }
+    const ky = 1 - 0.58 * p.sag, kx = 1 + 0.28 * p.sag;
+    for (let i = 0; i < n; i += 3) {
+      a[i0 + i] = r.cx + (r.orig[i] - r.cx) * kx;
+      a[i0 + i + 1] = r.lo + (r.orig[i + 1] - r.lo) * ky;
+      a[i0 + i + 2] = r.cz + (r.orig[i + 2] - r.cz) * kx;
+    }
+    pos.addUpdateRange(i0, n); pos.needsUpdate = true;
+  }
+  if (p.wall) updateWall(p.wall);
+}
+/** Высота стенки — по самому высокому уцелевшему мешку. */
+function updateWall(w) {
+  let top = w.base;
+  for (const q of w.bags) if (!q.dead) top = Math.max(top, q.top0 - (q.top0 - q.base0) * 0.58 * (q.sag || 0));
+  const c = w.col;
+  if (Math.abs(c.y1 - top) < 0.02) return;
+  removeStaticCollider(c);
+  c.y1 = Math.max(c.y0 + 0.05, top);
+  addStaticCollider(c);
 }
 
 /* ---------- Пожар ---------- */
@@ -373,6 +481,7 @@ function updateSmolder(dt, step) {
 let gT = 0, sT = 0;
 export function updateStructs(dt) {
   processQueue();
+  updateToppled(dt);
   updateBurning(dt);
   sT += dt;
   updateSmolder(dt, sT > 0.5);
@@ -382,3 +491,5 @@ export function updateStructs(dt) {
 }
 export const structStats = () => ({ structs: STRUCTS.length, burning: BURNING.length, smolder: SMOLDER.length, broken: STRUCTS.reduce((a, s) => a + s.panels.filter(p => p.dead).length, 0) });
 export const structAt = (x, z, r = 2) => STRUCTS.filter(s => s.center && Math.hypot(s.center.x - x, s.center.z - z) < s.radius + r);
+/** Снять деталь снаружи (перекусили проволоку, выстрел по двери добил). */
+export function breakPanel(p, from, force = 1) { if (p && !p.dead) kill(p, from, force, 0); }

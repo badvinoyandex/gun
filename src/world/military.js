@@ -4,7 +4,9 @@ import { rng, TAU, lerp, polyAt, clamp, hash2 } from '../core/math.js';
 import { MAP, SPAWNS, TRENCHES, TW, trenchTaper, terrainH, baseH, addPad, keep, edgeDist, PATHS, trenchDist, pathInfluence, isFree, polyDist } from './layout.js';
 import { hFast } from './heightcache.js';
 import { M, TEX } from '../gen/materials.js';
-import { box, cyl, beam, place, frame, beginStruct, panel, noPanel, endStruct } from './builders.js';
+import { box, cyl, beam, place, frame, beginStruct, panel, noPanel, endStruct, inStruct } from './builders.js';
+import { addWire, addGenerator } from '../fx/interact.js';
+import { sheet } from './wrecks.js';
 import { addBox, addCircle } from '../core/colliders.js';
 import { addLamp } from './lamps.js';
 import { makeCloth } from './cloth.js';
@@ -20,23 +22,32 @@ const bag = (x, y, z, rot, rx = 0, rz = 0) => {
   bagGeo ??= (() => { const g = new THREE.SphereGeometry(1, 9, 5); g.scale(0.3, 0.1, 0.18); return g; })();
   place(M.sack, bagGeo, x, y, z, [rx, rot, rz]);
 };
-/** Стенка из мешков: ряды со сдвигом в полмешка, верхний ряд с прорехами. */
+/** Стенка из мешков: ряды со сдвигом в полмешка, верхний ряд с прорехами.
+    Каждый мешок — деталь: пуля его мнёт (оседает, сыплется песок), близкий
+    разрыв сносит. Высота укрытия (коллайдер) следит за уцелевшими мешками. */
 export function sandbagWall(x0, z0, x1, z1, rows = 3, R = rng(1), collide = true) {
   const L = Math.hypot(x1 - x0, z1 - z0), rot = Math.atan2(x1 - x0, z1 - z0) + Math.PI / 2;
   const ux = (x1 - x0) / L, uz = (z1 - z0) / L;
-  let yMax = -1e9;
+  const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2, g = hFast(cx, cz);
+  const own = !inStruct();
+  const wall = { bags: [], base: g, col: null };
+  if (own) beginStruct({ kind: 'sandbags', x: cx, z: cz, rot, w: L, d: 0.5, h: rows * 0.17, fy: g, fuel: 0, quiet: true });
   for (let r = 0; r < rows; r++) {
     for (let s = (r % 2) * 0.28; s < L; s += 0.56) {
       if (r === rows - 1 && R() < 0.18) continue;
       const x = x0 + ux * s, z = z0 + uz * s, y = hFast(x, z) + 0.08 + r * 0.17;
+      if (own) {
+        const p = panel('bag', { hp: 1, mode: 'sag', density: 1600, float: 0, burnable: false });
+        p.quiet = true; p.wall = wall; p.top0 = y + 0.1; p.base0 = y - 0.1;
+        wall.bags.push(p);
+      }
       bag(x, y, z, rot + R.range(-0.12, 0.12), R.range(-0.05, 0.05), R.range(-0.08, 0.08));
-      yMax = Math.max(yMax, y);
     }
   }
-  if (collide) {
-    const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2, g = hFast(cx, cz);
-    addBox(cx, g + rows * 0.09, cz, 0.4, rows * 0.18 + 0.05, L, rot - Math.PI / 2, { walk: true });
-  }
+  if (own) noPanel();
+  if (collide) { wall.col = addBox(cx, g + rows * 0.09, cz, 0.4, rows * 0.18 + 0.05, L, rot - Math.PI / 2, { walk: true }); if (own) wall.col.sandWall = wall; }
+  if (own) endStruct();
+  return wall;
 }
 export function sandbagRing(x, z, r, rows, gapA, gapW, R) {
   const n = Math.round(TAU * r / 0.9);
@@ -214,17 +225,30 @@ function buildTrench(t, ti, R) {
   }
   // колючка перед окопом: колья и три нити, разрывы у троп и деревьев
   if (t.bays) {
+    // колючка: каждый пролёт между кольями — деталь с коллайдером; режется (E) и рвётся взрывом
     const off = 5.5 * enemySide;
     let prev = null;
+    const q0 = polyAt(P, t.len / 2);
+    beginStruct({ kind: 'wire', x: q0.x, z: q0.z, rot: 0, w: t.len, d: 1, h: 1, fy: hFast(q0.x, q0.z), fuel: 0, quiet: true });
     for (let s = 1; s < t.len; s += 2.6) {
       const q = polyAt(P, s), x = q.x - q.tz * off + R.range(-0.3, 0.3), z = q.z + q.tx * off + R.range(-0.3, 0.3);
       if (pathInfluence(x, z, 0.8) > 0 || trenchDist(x, z) < 2.5 || treeFree(x, z) === false) { prev = null; continue; }
       const y = hFast(x, z);
+      noPanel();
       cyl(M.deadwood, x, y + 0.55, z, 0.04, 0.035, 1.1, { seg: 5, rot: [R.range(-0.1, 0.1), 0, R.range(-0.1, 0.1)] });
-      if (prev) for (const hh of [0.25, 0.6, 0.95]) beam(M.wire, V(prev[0], prev[1] + hh, prev[2]), V(x, y + hh + R.range(-0.04, 0.04), z), 0.005, { seg: 3, cast: false });
-      if (prev && R() < 0.5) beam(M.wire, V(prev[0], prev[1] + 0.95, prev[2]), V(x, y + 0.25, z), 0.005, { seg: 3, cast: false });
+      if (prev) {
+        const pn = panel('wire', { hp: 0.35, mode: 'none', burnable: false, density: 100 });
+        pn.quiet = true;
+        for (const hh of [0.25, 0.6, 0.95]) beam(M.wire, V(prev[0], prev[1] + hh, prev[2]), V(x, y + hh + R.range(-0.04, 0.04), z), 0.005, { seg: 3, cast: false });
+        if (R() < 0.5) beam(M.wire, V(prev[0], prev[1] + 0.95, prev[2]), V(x, y + 0.25, z), 0.005, { seg: 3, cast: false });
+        const mx = (prev[0] + x) / 2, mz = (prev[2] + z) / 2, L = Math.hypot(x - prev[0], z - prev[2]);
+        addBox(mx, (prev[1] + y) / 2 + 0.5, mz, 0.12, 1.0, L, Math.atan2(x - prev[0], z - prev[2]), { walk: false }).wire = true;
+        addWire(pn, V(prev[0], prev[1] + 0.6, prev[2]), V(x, y + 0.6, z));
+      }
       prev = [x, y, z];
     }
+    noPanel();
+    endStruct();
   }
 }
 function crateAt(x, z, rot, y) {
@@ -278,9 +302,14 @@ function dugout(x, z, rot, R) {
   const [sx, sz] = F.p(0, d / 2 + 0.5);
   box(M.planksDark, sx, g + 0.02, sz, 1.2, 0.08, 0.6, { rot, tile: 1 });
   endStruct();
-  // коптилка внутри
+  // коптилка внутри, на стене — позывные и частоты, на ящике — схема
   const [lx, lz] = F.p(w / 2 - 0.6, -d / 2 + 0.5);
   addLamp({ kind: 'bulb', x: lx, y: fy + 1.6, z: lz, flick: 0.2, ground: fy });
+  const [px, pz] = F.p(-0.4, -d / 2 + 0.3); sheet(R.int(0, 1), px, fy + 1.35, pz, rot);
+  const [qx, qz] = F.p(0.6, -d / 2 + 0.3); sheet(2, qx, fy + 1.25, qz, rot, { tilt: 0.05 });
+  const [cx2, cz2] = F.p(-w / 2 + 0.6, -0.4);
+  box(M.crate, cx2, fy + 0.2, cz2, 0.9, 0.4, 0.5, { rot: rot + 0.2, tile: 0.8, collide: true });
+  sheet(3, cx2, fy + 0.41, cz2, rot + 0.3, { flat: true, w: 0.42, h: 0.56 });
 }
 
 /* ---------- Базы команд ---------- */
@@ -332,7 +361,7 @@ function buildBase(B, R) {
     crate(cx, cz, L.rot + R.range(-0.3, 0.3), R, R() < 0.4 ? 2 : 1);
   }
   // генератор, прожекторная мачта, бочки
-  generator(B.gen[0], B.gen[1], L.rot, R);
+  generator(B.gen[0], B.gen[1], L.rot, R, s);
   const [mx, mz] = L.p(1.5, -3);
   floodMast(mx, mz, L, R);
   const [fbx, fbz] = L.p(1, 4);
@@ -412,15 +441,25 @@ function barrelStatic(x, z, R) {
   for (const yy of [0.25, 0.62]) cyl(mat, x, y + yy, z, 0.31, 0.31, 0.04, { seg: 14 });
   addCircle(x, z, 0.32, y, y + 0.9);
 }
-function generator(x, z, rot, R) {
+/** Генератор базы питает прожекторы и фонари: подорвали или расстреляли — база во тьме. */
+function generator(x, z, rot, R, s) {
   const y = hFast(x, z), F = frame(x, z, rot);
+  beginStruct({ kind: 'generator', x, z, rot, w: 1.6, d: 1, h: 1.2, fy: y, fuel: 0, quiet: true });
+  const p = panel('prop', { hp: 0.9, mode: 'rigid', density: 1400, float: 0, burnable: false });
   box(M.carPaint[3], x, y + 0.45, z, 1.4, 0.8, 0.8, { rot, tile: 1, collide: true });
   box(M.dark, x, y + 0.9, z, 1.2, 0.12, 0.7, { rot, tile: 1 });
+  // решётка радиатора, щиток с приборами, кабели к мачте
+  const [rx, rz] = F.p(-0.71, 0); box(M.dark, rx, y + 0.5, rz, 0.02, 0.5, 0.6, { rot, tile: 1 });
+  const [bx, bz] = F.p(0.2, 0.41); box(M.steel, bx, y + 0.6, bz, 0.4, 0.3, 0.02, { rot, tile: 1 });
+  noPanel();
   const [ex, ez] = F.p(0.8, 0);
   cyl(M.rust, ex, y + 1.2, ez, 0.05, 0.05, 1.1, { seg: 6 });
   const [kx, kz] = F.p(-1.2, 0.3);
   cyl(M.barrel[1], kx, y + 0.3, kz, 0.18, 0.18, 0.5, { seg: 10 });
+  endStruct();
+  addGenerator({ x, y: y + 0.5, z, panel: p, ex, ey: y + 1.75, ez, cx: s.x, cz: s.z, r: 36 });
 }
+
 /** Прожекторная мачта базы: два прожектора освещают подступы и склад. */
 function floodMast(x, z, L, R) {
   const y = terrainH(x, z), H = 6.2;
@@ -642,11 +681,39 @@ function checkpoint(x, z, sgn, R) {
   vehicle('sedan', x + 0.6, z - 10.5 * sgn, rot + 0.35, { seed: 70 + sgn, burnt: true });
 }
 
+/* ---------- Перекрытая щель ----------
+   Середина хода сообщения накрыта накатом из брёвен и землёй: по нему можно
+   пройти поверху, внутри — сумрак и коптилка. Сверху не видно, кто идёт по ходу. */
+function coveredTrench(t, R) {
+  const P = t.pts, s0 = t.len * 0.3, s1 = Math.min(t.len - TW.ramp - 1, s0 + 8.5);
+  const logs = new THREE.CylinderGeometry(0.11, 0.11, 1, 7);
+  const edgeH = q => { const nx = -q.tz, nz = q.tx; return Math.max(terrainH(q.x + nx * 1.35, q.z + nz * 1.35), terrainH(q.x - nx * 1.35, q.z - nz * 1.35)); };
+  for (let s = s0; s <= s1; s += 0.24) {
+    const q = polyAt(P, s), y = edgeH(q) + 0.05, rot = Math.atan2(q.tx, q.tz);
+    place(M.barkLog, logs, q.x, y, q.z, [0, rot, Math.PI / 2], [1, 2.9, 1]);
+  }
+  // земля на накате — вал поверху, и опорные стойки у входов
+  for (let s = s0; s < s1; s += 1.4) {
+    const q = polyAt(P, s + 0.7), y = edgeH(q), rot = Math.atan2(q.tx, q.tz);
+    place(M.dirtMound, new THREE.SphereGeometry(1, 10, 5, 0, TAU, 0, Math.PI / 2), q.x, y + 0.12, q.z, rot, [1.7, 0.32, 1.1]);
+    addBox(q.x, y + 0.2, q.z, 3.0, 0.4, 1.45, rot, { walk: true });
+  }
+  for (const s of [s0, s1]) {
+    const q = polyAt(P, s), nx = -q.tz, nz = q.tx, fl = terrainH(q.x, q.z), y = edgeH(q);
+    for (const e of [-1, 1]) cyl(M.barkPine, q.x + nx * e * 0.62, (fl + y) / 2, q.z + nz * e * 0.62, 0.09, 0.09, y - fl + 0.1, { seg: 6 });
+    place(M.barkPine, new THREE.CylinderGeometry(0.1, 0.1, 1.5, 6), q.x, y - 0.06, q.z, [0, Math.atan2(q.tx, q.tz) + Math.PI / 2, Math.PI / 2]);
+  }
+  const q = polyAt(P, (s0 + s1) / 2), fl = terrainH(q.x, q.z);
+  addLamp({ kind: 'bulb', x: q.x - q.tz * 0.5, y: fl + 1.55, z: q.z + q.tx * 0.5, flick: 0.3, ground: fl, power: 2.5, range: 6 });
+  sheet(0, q.x - q.tz * 0.63, fl + 1.3, q.z + q.tx * 0.63, Math.atan2(q.tx, q.tz) - Math.PI / 2);
+}
+
 /* ---------- Сборка ---------- */
 export function buildMilitary() {
   const R = rng(1212);
   lanternMat = new THREE.MeshStandardMaterial({ color: 0x8d8f8a, emissive: 0xffb45a, emissiveIntensity: 0, roughness: 0.3 });
   TRENCHES.forEach((t, i) => buildTrench(t, i, R));
+  for (const t of TRENCHES) if (t.covered) coveredTrench(t, R);
   // пулемётные ячейки в конце сап
   for (const t of TRENCHES) if (t.nest1) {
     const e = trenchEnd(t, 1);

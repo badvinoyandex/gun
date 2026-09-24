@@ -34,7 +34,7 @@ export function addLamp(o) {
     pos: new THREE.Vector3(o.x, o.y, o.z), kind: o.kind, on: o.on ?? true, flick: o.flick ?? 0,
     ground: o.ground ?? hFast(o.x, o.z), color: new THREE.Color(o.color ?? k.color), dir: o.dir || null,
     power: o.power ?? k.power, range: o.range ?? k.range, lens: o.lens || null, level: 0, seed: LAMPS.length * 13.7,
-    pool: o.pool ?? k.pool, camp: !!o.camp
+    pool: o.pool ?? k.pool, camp: !!o.camp, blink: !!o.blink, breakable: o.breakable !== false
   };
   LAMPS.push(L);
   return L;
@@ -300,6 +300,7 @@ export function updateLamps(lampOn) {
   const aI = glowIM.geometry.attributes.aI, cI = coneIM.geometry.attributes.aI;
   for (let i = 0; i < LAMPS.length; i++) {
     const L = LAMPS[i];
+    if (L.panel?.dead && L.on) L.on = false;
     let lv = L.on ? 1 : 0;
     if (L.kind === 'fire') lv = 0.75 + 0.18 * Math.sin(t * 7.1 + L.seed) + 0.12 * Math.sin(t * 13.3 + L.seed * 2) + 0.08 * Math.sin(t * 23.1);
     if (L.camp && L.on) {
@@ -307,6 +308,9 @@ export function updateLamps(lampOn) {
       const n1 = Math.sin(t * 2.3 + L.seed) * Math.sin(t * 0.7 + L.seed * 1.3), n2 = Math.sin(t * 17 + L.seed * 3) * Math.sin(t * 29 + L.seed);
       lv *= n1 > 0.72 ? 0.02 : (0.45 + 0.25 * n2 + 0.2 * Math.sin(t * 3.1 + L.seed));
       if (Math.sin(t * 0.37 + L.seed * 2.1) > 0.93) lv *= Math.abs(Math.sin(t * 43 + L.seed)) > 0.5 ? 1.3 : 0.05;
+    } else if (L.blink && L.on) {
+      // заградительный огонь вышки: ровное мигание раз в полторы секунды
+      lv *= Math.sin(t * 4.2 + L.seed) > 0.35 ? 1 : 0.04;
     } else if (L.flick && L.on) {
       // неисправная лампа: короткие провалы и дрожь накала
       const f = Math.sin(t * 1.7 + L.seed) * Math.sin(t * 5.3 + L.seed * 0.7);

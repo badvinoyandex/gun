@@ -36,6 +36,14 @@ import { burnPlayer, splashAt } from './game/player.js';
 import { updateStructs, structStats, structHeatAt, igniteStruct, structAt, BURNING } from './fx/structures.js';
 import { setSplashHandler } from './core/physics.js';
 import { STRUCTS } from './world/builders.js';
+import { planLandmarks, buildLandmarks, updateLandmarks, LANDMARKS } from './world/landmarks.js';
+import { planWrecks, buildWrecks, updateWrecks, WRECKS } from './world/wrecks.js';
+import { buildInteract, updateInteract, INTER, DOORS, WIRES, GENS, shootLamps } from './fx/interact.js';
+import { buildBirds, updateBirds, scareBirds, birdStats, BIRDS } from './world/birds.js';
+import { LADDERS } from './game/ladders.js';
+import { LAMPS } from './world/lamps.js';
+import { scorch } from './fx/fire.js';
+import { STREAMS, BOGS, FORDS, DIGS, inBog, streamAt } from './world/layout.js';
 
 
 /* ============================================================================
@@ -46,7 +54,7 @@ let locked = false, searchlight = null, draws = 0;
 const STEPS = [
   ['Физика: ammo.js', () => initPhysics()],
   ['Текстуры и материалы', () => buildMaterials()],
-  ['План карты', () => { planBuildings(); planMilitary(); planPiers(); planProps(); planLamps(); }],
+  ['План карты', () => { planBuildings(); planMilitary(); planPiers(); planProps(); planLamps(); planLandmarks(); planWrecks(); }],
   ['Рельеф: кэш высот', () => buildHeightCache()],
   ['Рельеф: сетка', () => buildTerrain()],
   ['Небо и свет', () => buildSky()],
@@ -55,11 +63,13 @@ const STEPS = [
   ['Озеро, камыш, мостки', () => buildLake()],
   ['Турбаза и кордон', () => buildBuildings()],
   ['Окопы, базы, минное поле', () => buildMilitary()],
+  ['Вышки, мост, ручьи, болото', () => buildLandmarks()],
+  ['Следы фронта', () => buildWrecks()],
   ['Техника и укрытия', () => { buildProps(); buildGlass(); }],
   ['Физика: статический мир', () => { const g = heightGrid(); buildStaticWorld(g.H, g.HN, g.HS, g.R); buildPlayerProxy(); setPhysCamera(camera); }],
   ['Фонари', () => { buildLamps(); finishLamps(); }],
-  ['Частицы и взрывы', () => { buildParticles(); buildExplosions(); buildDestruction(); buildWeapons(); buildFootprints(); }],
-  ['Огонь и погода', () => { buildFire(); buildWeather(); }],
+  ['Частицы и взрывы', () => { buildParticles(); buildExplosions(); buildDestruction(); buildWeapons(); buildFootprints(); buildInteract(); buildBirds(); }],
+  ['Огонь и погода', () => { buildFire(); for (const q of LANDMARKS.scorch) if (q) scorch(q.x, q.z, Math.round(q.r), 0.9); buildWeather(); }],
   ['Сборка геометрии', () => { draws = flushStatic(); buildPost(); buildMapOverlay(); collectWetMaterials(new Set([TERRAIN.mat])); }],
   ['Компиляция шейдеров', () => { spawnAt('A', 'drone'); updatePlayer(0); updateSky(0); warmupDestruction(); renderer.compile(scene, camera); endWarmup(); }]
 ];
@@ -91,9 +101,11 @@ function finish() {
   $('#help').textContent =
     'Мышь — обзор · WASD — полёт/ходьба · Space/E вверх · C/Q вниз · Shift быстрее · колесо — скорость дрона\n' +
     'ЛКМ — сброс гранаты / бросок · G — дрон ⇄ пешком · F — прожектор · M — карта · P — облёт · R — на базу\n' +
+    'Пешком: E — дверь, держать E у колючки — перекусить, W у лестницы — лезть (Space — спрыгнуть)\n' +
     'ПКМ — выстрел · B — артналёт по точке прицела · K — погода · J — молния\n' +
     'N — фаза суток · T — пауза · [ ] — скорость времени · 1..4 — утро/день/закат/ночь · U — звук · V — интерфейс';
   // гроза: гром с задержкой, близкий разряд может ударить в дерево
+  BLAST.hooks.push((x, y, z, size) => scareBirds(x, y, z, 70 + 45 * size, 1));
   WEATHER.onStrike = (x, y, z, dist) => { thunder(dist); if (dist < 150) lightningHit(x, z); };
   // упавшая головня поджигает постройку, у которой лежит; тела в воде — всплеск
   FIRE.onBrand = p => { for (const s of structAt(p.x, p.z, 0.8)) if (Math.random() < 0.3) igniteStruct(s, 0.12); };
@@ -111,7 +123,7 @@ function finish() {
       }
     }
     for (const s of STRUCTS) {
-      if (!s.center || s.kind === 'fence' || s.kind === 'bench') continue;
+      if (!s.center || s.kind === 'fence' || s.kind === 'bench' || s.kind === 'sandbags' || s.kind === 'wire') continue;
       if (trenchDist(s.center.x, s.center.z) < TW.cap + Math.min(s.w ?? 1, s.d ?? 1) / 2) out.push(['постройка в окопе', s.kind, s.name || '', s.center.x.toFixed(1), s.center.z.toFixed(1)]);
     }
     for (const t of TREES) for (const s of STRUCTS) {
@@ -129,11 +141,13 @@ function finish() {
     lookAt: (x, y, z) => { const dx = x - PL.pos.x, dy = y - PL.pos.y, dz = z - PL.pos.z; PL.yaw = Math.atan2(-dx, -dz); PL.pitch = Math.atan2(dy, Math.hypot(dx, dz)); },
     step: dt => frame(dt), tick: (dt, n = 1) => { for (let i = 0; i < n; i++) frame(dt, false); }, explode, ignite, shoot, artillery, aimPoint, weather: WEATHER, setWeather, strikeNow, fire: FIRE, setMode, spawnAt, startCinematic, terrainH, map: MAP, spawns: SPAWNS, trenches: TRENCHES, trees: TREES, structs: STRUCTS, igniteStruct,
     // логика без отрисовки: для автотестов на медленных машинах
+    colliders: COLLIDERS, ladders: LADDERS, doors: DOORS, wires: WIRES, gens: GENS, lamps: LAMPS, birds: BIRDS, scareBirds, landmarks: LANDMARKS, wrecks: WRECKS, inter: INTER, shootLamps,
+    streams: STREAMS, bogs: BOGS, fords: FORDS, digs: DIGS, inBog, streamAt,
     addBody, simulate: (dt, n = 1) => { for (let i = 0; i < n; i++) { FRAME.t += dt; updatePlayer(dt); updateExplosions(dt); stepPhysics(dt); } return PL; }, phys: PHYS,
     perf: PERF, stats: () => ({
       calls: renderer.info.render.calls, tris: renderer.info.render.triangles, grass: GRASS.count, floraTiles: FLORA.tiles.length, floraDrawn: FLORA.drawn,
       ...forestStats(), colliders: COLLIDERS.length, houses: HOUSES.length, cloths: CLOTHS.length, barrels: BARRELS.length,
-      mines: MINES.list.length, paths: PATHS.length, ...physStats(), ...fireStats(), ...weatherStats(), ...glassStats(), ...destructionStats(), ...structStats(), trenches: TRENCHES.length, staticDraws: draws, ...lampStats(), quality: QNAME
+      mines: MINES.list.length, paths: PATHS.length, ...physStats(), ...fireStats(), ...weatherStats(), ...glassStats(), ...destructionStats(), ...structStats(), ...birdStats(), doors: DOORS.length, ladders: LADDERS.length, wiresN: WIRES.length, trenches: TRENCHES.length, staticDraws: draws, ...lampStats(), quality: QNAME
     })
   };
   $('#g_load').style.display = 'none';
@@ -175,6 +189,7 @@ addEventListener('keydown', e => {
   if (['Space', 'Tab', 'KeyC', 'ControlLeft', 'F2', 'F3'].includes(e.code)) e.preventDefault();
   if (!window.MAP_READY) return;
   if (PL.cine && ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyG'].includes(e.code)) { stopCinematic(); toast('облёт прерван — управление ваше'); }
+  if (e.code === 'KeyE' && !e.repeat && PL.mode === 'walk') INTER.press = true;
   switch (e.code) {
     case 'KeyG': setMode(PL.mode === 'drone' ? 'walk' : 'drone'); toast(PL.mode === 'drone' ? 'дрон' : 'пешком'); break;
     case 'KeyF': PL.light = !PL.light; toast('прожектор: ' + (PL.light ? 'вкл' : 'выкл')); break;
@@ -255,6 +270,10 @@ function frame(dt, render = true) {
   updateFootprints(PL);
   flushBurn(FRAME.t);
   updateStructs(dt);
+  updateLandmarks(dt, SKY);
+  updateWrecks(dt);
+  updateBirds(dt, PL, SKY);
+  updateInteract(dt, PL, keys, SKY);
   burnPlayer(dt, Math.max(heatAt(PL.pos.x, PL.pos.z), structHeatAt(PL.pos.x, PL.pos.z)));
   const ground = hFast(camera.position.x, camera.position.z);
   updateParticles(dt, { night: SKY.night, h: TIME.h, fogColor: SKY.fogColor, ground, light: Math.max(0.12, (0.2 + 0.8 * (1 - SKY.night)) * (1 - WEATHER.ov * 0.3)) });
@@ -280,6 +299,7 @@ function frame(dt, render = true) {
   if (se > 1 && (FRAME.n % se === 0 || BLAST.shake > 0.05)) renderer.shadowMap.needsUpdate = true;
   composer.render();
   updateHud(dt);
+  const hint = $('#hint'); if (hint.textContent !== INTER.hint) { hint.textContent = INTER.hint; hint.classList.toggle('on', !!INTER.hint); }
 }
 function adaptResolution(dt) {
   PERF.acc += dt; PERF.n++; PERF.t += dt;

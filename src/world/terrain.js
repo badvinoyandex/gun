@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { FXU, FXU_GLSL } from '../core/fxu.js';
 import { scene, Q } from '../core/env.js';
-import { MAP, terrainH, splat, edgeDist, TRENCHES, CRATERS, PADS, lakeRho, pathInfluence } from './layout.js';
+import { MAP, terrainH, splat, edgeDist, TRENCHES, CRATERS, PADS, lakeRho, pathInfluence, DIGS, STREAMS, BOGS, FORDS } from './layout.js';
 import { TEX } from '../gen/materials.js';
 import { forestDensity } from './forest.js';
 import { hFast } from './heightcache.js';
@@ -21,6 +21,11 @@ function chunkStep(x0, z0) {
   const inBox = (x, z) => x > x0 - pad && x < x1 + pad && z > z0 - pad && z < z1 + pad;
   for (const t of TRENCHES) for (const p of t.pts) if (inBox(p[0], p[1])) return Q.tex < 0.6 ? 0.32 : 0.25;
   for (const c of CRATERS) if (inBox(c.x, c.z)) return 0.5;
+  // погреб под домом: откосы ямы короче метра
+  for (const g of DIGS) if (inBox(g.x, g.z)) return 0.35;
+  for (const st of STREAMS) for (let i = 0; i < st.pts.length; i += 2) if (inBox(st.pts[i][0], st.pts[i][1])) return 0.5;
+  for (const b of BOGS) if (b.x > x0 - b.r - 2 && b.x < x1 + b.r + 2 && b.z > z0 - b.r - 2 && b.z < z1 + b.r + 2) return 0.6;
+  for (const f of FORDS) for (let t = 0; t <= 1; t += 0.1) if (inBox(f.a[0] + (f.b[0] - f.a[0]) * t, f.a[1] + (f.b[1] - f.a[1]) * t)) return 0.6;
   // берег острова и уреза — плавнее
   for (let i = 0; i <= 4; i++) for (let j = 0; j <= 4; j++) {
     const r = lakeRho(x0 + i * 4, z0 + j * 4);

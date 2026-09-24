@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { scene, camera, FRAME, Q } from '../core/env.js';
 import { clamp, lerp, sr, srnd, TAU } from '../core/math.js';
-import { lakeRho, pathInfluence, trenchDist, edgeDist, MAP, PADS, padRectDist } from '../world/layout.js';
+import { lakeRho, pathInfluence, trenchDist, edgeDist, MAP, PADS, padRectDist, inBog, streamAt, STREAM_BW } from '../world/layout.js';
 import { hFast, grassDensity } from '../world/heightcache.js';
 import { forestDensity } from '../world/forest.js';
 import { BURN, burnData, markBurnDirty } from '../core/fxu.js';
@@ -31,7 +31,7 @@ export function buildFire() {
   for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
     const x = BURN.X0 + i + 0.5, z = BURN.X0 + j + 0.5, k = j * N + i;
     let f = 0;
-    if (lakeRho(x, z) > 1.04 && pathInfluence(x, z, 0.3) < 0.4 && trenchDist(x, z) > 1.1 && !PADS.some(p => padRectDist(p, x, z) < 0.5)) {
+    if (lakeRho(x, z) > 1.04 && pathInfluence(x, z, 0.3) < 0.4 && trenchDist(x, z) > 1.1 && inBog(x, z) < 0.4 && streamAt(x, z).d > STREAM_BW + 0.6 && !PADS.some(p => padRectDist(p, x, z) < 0.5)) {
       f = clamp(grassDensity(x, z) * 0.85 + forestDensity(x, z) * 0.35, 0, 1.2);
       const e = edgeDist(x, z);
       if (e > MAP.PLAY - 2 && e < MAP.FENCE) f *= 1.25;                  // сухостой минной полосы

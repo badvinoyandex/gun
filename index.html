@@ -46,6 +46,8 @@
   #zone{position:absolute;left:50%;top:18%;transform:translateX(-50%);font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:#cfd8cd;opacity:.85}
   #zone.warn{color:#ff7a5c;animation:blink 1s steps(2) infinite;font-weight:700}
   @keyframes blink{50%{opacity:.35}}
+  #hint{position:absolute;left:50%;top:58%;transform:translateX(-50%);opacity:0;transition:opacity .15s;font-size:12px;letter-spacing:.06em;color:#e6ece2;background:rgba(10,14,12,.55);padding:4px 10px;border-radius:4px}
+  #hint.on{opacity:.95}
   #toast{position:absolute;left:50%;bottom:70px;transform:translateX(-50%);opacity:0;transition:opacity .3s;text-align:center}
   #toast.on{opacity:.95}
   #help{position:absolute;left:14px;bottom:12px;color:#9fb0a2;display:none;font-size:11px;line-height:1.7;white-space:pre}
@@ -83,7 +85,7 @@
       <div><b>C / Q</b>вниз</div><div><b>Shift</b>быстрее</div><div><b>колесо</b>скорость</div>
       <div><b>ЛКМ</b>граната</div><div><b>ПКМ</b>выстрел</div><div><b>B</b>артналёт</div>
       <div><b>K</b>погода</div><div><b>J</b>молния</div><div><b>G</b>дрон ⇄ пешком</div><div><b>F</b>прожектор</div><div><b>C / Space</b>нырнуть / всплыть</div>
-      <div><b>M</b>карта</div><div><b>P</b>облёт</div><div><b>R</b>на базу</div>
+      <div><b>E</b>дверь / колючка</div><div><b>W у лестницы</b>лезть</div><div><b>M</b>карта</div><div><b>P</b>облёт</div><div><b>R</b>на базу</div>
       <div><b>N</b>фаза суток</div><div><b>1..4</b>утро…ночь</div><div><b>T · [ ]</b>время</div>
       <div><b>U</b>звук</div><div><b>V</b>интерфейс</div><div><b>Esc</b>пауза</div>
     </div>
@@ -96,6 +98,7 @@
   <div id="clock"><b>09:00</b><span>день</span></div>
   <div id="zone"></div>
   <div id="toast"></div>
+  <div id="hint"></div>
   <div id="help"></div>
   <div id="map"><canvas></canvas></div>
 </div>
