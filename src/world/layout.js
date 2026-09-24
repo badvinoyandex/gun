@@ -369,12 +369,12 @@ function streamCarve(x, z, h) {
   const d = _sq.d, bw = STREAM_BW;
   // берега: крутые у воды, выполаживаются к бровке; по бровке — лёгкий вал
   const bank = _sq.bed + 2.9 * smoothstep(bw, bw + 3.4, d) + Math.max(0, d - bw - 3.4) * 0.35;
-  const k = 0.5;                                          // мягкий минимум — без излома на бровке
+  const k = 0.2;                                          // мягкий минимум — без излома на бровке
   const m = h - bank;
   const carved = m > k ? bank : m < -k ? h : bank + (m + k) * (m + k) / (4 * k);
   // валы из вынутого грунта по обоим берегам: овраг глубже, у устья сходят на нет
   const taper = 1 - smoothstep(_sq.st.len - 26, _sq.st.len - 8, _sq.s);
-  return carved + 0.6 * Math.exp(-Math.pow((d - bw - 4.3) / 1.35, 2)) * taper;
+  return carved + 0.8 * Math.exp(-Math.pow((d - bw - 4.3) / 1.35, 2)) * taper;
 }
 
 /* ---------- Болото ----------

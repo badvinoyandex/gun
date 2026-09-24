@@ -42,6 +42,7 @@ export function addDoor({ hx, hz, y, closed, openBy, w = 0.9, h = 2.0, t = 0.05,
   const cClosed = col(closed), cOpen = col(closed + openBy);
   (startOpen ? cClosed : cOpen).dead = true;
   const d = { pivot, mesh, closed, openBy, cur, target: cur, w, h, hx, hz, y, cClosed, cOpen, panel: curPanel() };
+  pivot.updateMatrixWorld(true);
   attachMesh(mesh);
   DOORS.push(d);
   return d;
@@ -127,7 +128,7 @@ export function buildInteract() {
   for (let c = 0; c < 4; c++) {
     const im = new THREE.InstancedMesh(holeGeo(c, 0.13), M.holes, HOLES.cap);
     for (let i = 0; i < HOLES.cap; i++) im.setMatrixAt(i, ZERO);
-    im.frustumCulled = false; im.renderOrder = 4; scene.add(im);
+    im.frustumCulled = false; im.renderOrder = 4; im.count = 0; scene.add(im);
     HOLES.ims.push(im); HOLES.owner.push(new Array(HOLES.cap).fill(null)); HOLES.n.push(0);
   }
   setPanelGoneHandler(p => {
@@ -144,6 +145,7 @@ export function addHole(p, n, kind, owner = null) {
   _q.multiply(new THREE.Quaternion().setFromAxisAngle(_z, Math.random() * TAU));
   _s.setScalar(sr(0.7, 1.25));
   im.setMatrixAt(i, _m.compose(_v.copy(p).addScaledVector(n, 0.006), _q, _s));
+  im.count = Math.max(im.count, i + 1);
   im.instanceMatrix.needsUpdate = true;
   HOLES.owner[kind][i] = owner;
 }

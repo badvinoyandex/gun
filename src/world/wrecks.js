@@ -27,9 +27,15 @@ export const WRECKS = { heli: null, art: null, mg: [], bmp: null, tank: null, sm
 
 /** Лист бумаги: на стене (tilt 0) или на ящике/земле (flat). */
 export function sheet(i, x, y, z, rot, o = {}) {
-  const g = new THREE.PlaneGeometry(o.w ?? 0.21, o.h ?? 0.28);
-  if (o.flat) place(M.paper[i % M.paper.length], g, x, y + 0.004, z, [-Math.PI / 2, rot, 0]);
-  else place(M.paper[i % M.paper.length], g, x, y, z, [o.tilt ?? 0, rot, sr(-0.08, 0.08)]);
+  const g = paperGeo(i, o.w ?? 0.21, o.h ?? 0.28);
+  if (o.flat) place(M.paperAtlas, g, x, y + 0.004, z, [-Math.PI / 2, rot, 0]);
+  else place(M.paperAtlas, g, x, y, z, [o.tilt ?? 0, rot, sr(-0.08, 0.08)]);
+}
+/** Плоскость листа с UV своей ячейки атласа записок. */
+export function paperGeo(i, w, h) {
+  const g = new THREE.PlaneGeometry(w, h), uv = g.attributes.uv, u0 = (i % 2) * 0.5, v0 = 0.5 - ((i % 4) >> 1) * 0.5;
+  for (let k = 0; k < uv.count; k++) uv.setXY(k, u0 + uv.getX(k) * 0.5, v0 + uv.getY(k) * 0.5);
+  return g;
 }
 /** Россыпь гильз: мелкие (пулемёт) или крупные (гаубица), лежат на боку. */
 function casings(x, z, n, big, R, spread = 1.4, dirA = 0) {
@@ -52,7 +58,7 @@ export function planWrecks() {
   const [hx, hz] = findSpot(-100, -22, 6.5, { sym: true });
   WRECKS.heli = { x: hx, z: hz, rot: 0.9 };
   WRECKS.art = { x: -hx, z: -hz, rot: Math.atan2(hx, hz) };
-  keep(hx, hz, 8); keep(-hx, -hz, 6);
+  keep(hx, hz, 11); keep(-hx, -hz, 7);
   { const [x, z] = findSpot(-50, 7, 2.6, { sym: true }); WRECKS.mg.push({ x, z, home: SPAWNS.A }, { x: -x, z: -z, home: SPAWNS.D }); keep(x, z, 2.8); keep(-x, -z, 2.8); }
   const onRoad = (name, tx, tz, off) => {
     const p = PATHS.find(q => q.name === name);

@@ -14,6 +14,7 @@ import { buildBoat } from './lake.js';
 import { PHYS, addBody } from '../core/physics.js';
 import { injectWind } from './wind.js';
 import { saplingGeo } from './forest.js';
+import { paperGeo } from './wrecks.js';
 import { WIND } from './wind.js';
 import { NO_REFLECT } from '../core/env.js';
 
@@ -195,9 +196,9 @@ function fireTower(t, R) {
   // внутри: стол с картой, пеленгатор-алидада, табурет, записки
   const tq = L(0.7, 0, -0.9);
   box(M.planks, tq.x, fy + 0.8, tq.z, 1.0, 0.05, 0.6, { rot, tile: 1, collide: true });
-  place(M.paper[2], new THREE.PlaneGeometry(0.42, 0.56), tq.x, fy + 0.83, tq.z, [-Math.PI / 2, rot + 0.3, 0]);
+  place(M.paperAtlas, paperGeo(2, 0.42, 0.56), tq.x, fy + 0.83, tq.z, [-Math.PI / 2, rot + 0.3, 0]);
   cyl(M.steel, tq.x - 0.2, fy + 0.86, tq.z + 0.1, 0.16, 0.16, 0.03, { seg: 16 });
-  place(M.paper[0], new THREE.PlaneGeometry(0.21, 0.28), ...(() => { const q = L(-CW + 0.04, 0, 0.6); return [q.x, fy + 1.3, q.z]; })(), [0, rot + Math.PI / 2, 0.05]);
+  place(M.paperAtlas, paperGeo(0, 0.21, 0.28), ...(() => { const q = L(-CW + 0.04, 0, 0.6); return [q.x, fy + 1.3, q.z]; })(), [0, rot + Math.PI / 2, 0.05]);
   addLamp({ kind: 'bulb', x, y: fy + 3.5, z, color: 0xff3320, power: 3, range: 6, blink: true, breakable: true, ground: fy }).panel = top;
   place(M.lampGlass, new THREE.SphereGeometry(0.1, 8, 6), x, fy + 3.42, z, 0);
   endStruct();
@@ -361,7 +362,7 @@ function bridge(b, R) {
   // табличка у съезда: «ОСТОРОЖНО» от руки
   const sx = ax - ux * 1.2 + nx * 1.1, sz = az - uz * 1.2 + nz * 1.1, sy = hFast(sx, sz);
   cyl(M.deadwood, sx, sy + 0.7, sz, 0.05, 0.05, 1.4, { seg: 5 });
-  place(M.paper[3], new THREE.PlaneGeometry(0.3, 0.4), sx, sy + 1.2, sz + 0.06, [0, rot + Math.PI, 0.08]);
+  place(M.paperAtlas, paperGeo(3, 0.3, 0.4), sx, sy + 1.2, sz + 0.06, [0, rot + Math.PI, 0.08]);
 }
 
 /* ---------- Брод: камни по косе, вешки по краям ---------- */
@@ -372,7 +373,8 @@ function ford(f, R) {
   for (let i = 0; i < pa.count; i++) {
     const vy = pa.getY(i), k = 1 + 0.12 * Math.sin(pa.getX(i) * 4.3 + pa.getZ(i) * 2.9);
     pa.setXYZ(i, pa.getX(i) * k, vy > 0.35 ? 0.35 + (vy - 0.35) * 0.25 : vy, pa.getZ(i) * k);
-    const wet = vy < 0.2 ? 0.55 : 0.85; col[i * 3] = wet; col[i * 3 + 1] = wet * 1.02; col[i * 3 + 2] = wet * 0.95;
+    // мокрый низ с зеленцой водорослей, сухой верх светлее, но не белый
+    const wet = vy < 0.2; col[i * 3] = wet ? 0.36 : 0.62; col[i * 3 + 1] = wet ? 0.42 : 0.63; col[i * 3 + 2] = wet ? 0.3 : 0.58;
   }
   rock.setAttribute('color', new THREE.BufferAttribute(col, 3)); rock.computeVertexNormals();
   for (let s = 0.6; s < L - 0.3; s += 0.82) {
@@ -457,14 +459,15 @@ const STREAM_FS = /* glsl */`
     vec3 nrm = normalize(vec3((r1 - 0.5) * 0.5 + (r3 - 0.5) * 0.25, 1.0, (r2 - 0.5) * 0.5));
     vec3 V = normalize(cameraPosition - vW);
     float fr = 0.04 + 0.96 * pow(1.0 - max(dot(nrm, V), 0.0), 5.0);
-    vec3 col = mix(uDeep, uSky, fr);
+    // вода в тенистом овраге: торфяная, отражает небо только под острым углом
+    vec3 col = mix(uDeep, uSky * 0.5, fr * 0.85);
     vec3 Hh = normalize(uSunDir + V);
-    col += uSun * pow(max(dot(nrm, Hh), 0.0), 120.0) * 2.5;
+    col += uSun * pow(max(dot(nrm, Hh), 0.0), 160.0) * 1.6;
     // пена на перекатах и у берегов
     float edge = smoothstep(0.35, 0.5, abs(vUv.x - 0.5));
     float foam = smoothstep(0.62, 0.8, r3 + vSlope * 18.0 + edge * 0.25) * (0.35 + vSlope * 25.0);
-    col = mix(col, vec3(0.82, 0.84, 0.8) * (0.4 + 0.6 * length(uSky)), clamp(foam, 0.0, 0.7));
-    float a = mix(0.72, 0.95, fr) * (1.0 - smoothstep(0.44, 0.5, abs(vUv.x - 0.5)) * 0.6);
+    col = mix(col, vec3(0.7, 0.72, 0.68) * (0.3 + 0.35 * length(uSky)), clamp(foam * 0.6, 0.0, 0.45));
+    float a = mix(0.6, 0.88, fr) * (1.0 - smoothstep(0.42, 0.5, abs(vUv.x - 0.5)) * 0.7);
     gl_FragColor = vec4(col, a);
     #include <fog_fragment>
   }`;
@@ -476,7 +479,7 @@ function streamWater(st) {
     const q = polyAt(st.pts, i), y = st.bed[Math.min(i, st.bed.length - 1)] + 0.2;
     const slope = i > 0 ? Math.max(0, st.bed[i - 1] - st.bed[Math.min(i, st.bed.length - 1)]) : 0;
     for (const e of [-1, 1]) { pos.push(q.x - q.tz * w * e, y, q.z + q.tx * w * e); uv.push(e < 0 ? 0 : 1, 0); aS.push(i); aSl.push(slope); }
-    if (i < n) { const k = i * 2; idx.push(k, k + 2, k + 1, k + 1, k + 2, k + 3); }
+    if (i < n) { const k = i * 2; idx.push(k, k + 1, k + 2, k + 1, k + 3, k + 2); }
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
@@ -485,7 +488,7 @@ function streamWater(st) {
   g.setAttribute('aSlope', new THREE.Float32BufferAttribute(aSl, 1));
   g.setIndex(idx); g.computeBoundingSphere();
   STREAM_FX.mat ??= new THREE.ShaderMaterial({
-    uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, { uT: { value: 0 }, uSky: { value: new THREE.Color(0.5, 0.6, 0.7) }, uSun: { value: new THREE.Color(1, 1, 1) }, uDeep: { value: new THREE.Color(0.06, 0.07, 0.04) }, uSunDir: { value: V(0.3, 0.8, 0.2) } }]),
+    uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, { uT: { value: 0 }, uSky: { value: new THREE.Color(0.5, 0.6, 0.7) }, uSun: { value: new THREE.Color(1, 1, 1) }, uDeep: { value: new THREE.Color(0.1, 0.11, 0.07) }, uSunDir: { value: V(0.3, 0.8, 0.2) } }]),
     vertexShader: STREAM_VS, fragmentShader: STREAM_FS, transparent: true, depthWrite: false, fog: true
   });
   const m = new THREE.Mesh(g, STREAM_FX.mat); m.renderOrder = 2; m.name = 'stream';
@@ -642,8 +645,8 @@ function bog(b, R) {
     pts.forEach(([x, z], i) => { const s = R.range(sc[0], sc[1]); p.set(x, hFast(x, z) - 0.03, z); q.setFromAxisAngle(V(0, 1, 0), R() * TAU); s3.set(s, s * R.range(0.8, 1.2), s); im.setMatrixAt(i, m.compose(p, q, s3)); });
     im.receiveShadow = true; im.computeBoundingSphere(); scene.add(im); NO_REFLECT.push(im);
   };
-  scatter(sedgeGeo(), 260, (x, z) => hFast(x, z) > lvl + 0.04, [0.8, 1.5]);
-  scatter(cattailGeo(), 70, (x, z) => { const h = hFast(x, z); return h > lvl - 0.1 && h < lvl + 0.08; }, [0.8, 1.2]);
+  scatter(sedgeGeo(), 150, (x, z) => hFast(x, z) > lvl + 0.1, [0.7, 1.3]);
+  scatter(cattailGeo(), 55, (x, z) => { const h = hFast(x, z); return h > lvl - 0.1 && h < lvl + 0.08 && inBog(x, z) < 0.8; }, [0.8, 1.2]);
   // сухостой: берёзы без кроны, обломаны на разной высоте, одна завалилась
   for (let i = 0; i < 6; i++) {
     const a = R() * TAU, r = Math.sqrt(R()) * b.r * 0.9, x = b.x + Math.cos(a) * r, z = b.z + Math.sin(a) * r, y = hFast(x, z) - 0.2;

@@ -80,7 +80,7 @@ export const setPanelGoneHandler = fn => { onGone = fn; };
 function removePanel(p) {
   // подвижная деталь (дверь) — отдельный меш: запекаем текущее положение в обломок
   if (p.mesh) {
-    p.mesh.updateMatrixWorld(true);
+    p.mesh.parent?.updateMatrixWorld(true);
     const g = p.mesh.geometry.clone().applyMatrix4(p.mesh.matrixWorld);
     g.computeBoundingBox();
     p.parts = [{ mat: p.mesh.material, geo: g }];
@@ -307,6 +307,8 @@ function updateWall(w) {
   let top = w.base;
   for (const q of w.bags) if (!q.dead) top = Math.max(top, q.top0 - (q.top0 - q.base0) * 0.58 * (q.sag || 0));
   const c = w.col;
+  w.y1max ??= c.y1;
+  top = Math.min(top, w.y1max);
   if (Math.abs(c.y1 - top) < 0.02) return;
   removeStaticCollider(c);
   c.y1 = Math.max(c.y0 + 0.05, top);

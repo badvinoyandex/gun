@@ -47,14 +47,14 @@ function grassDensityExact(x, z) {
   // вода ручья и окна болота — без травы (там осока и рогоз, они свои)
   if (streamAt(x, z).d < STREAM_BW + 0.25) return 0;
   const bog = inBog(x, z);
-  if (bog > 0.55) return 0.12;
+  if (bog > 0.35) return 0;
   let d = (1 - (FD ? forestFast(x, z) : forestDensity(x, z))) * 0.85 + 0.12 + edge;
   d += (1 - smoothstep(1.05, 1.6, rho)) * 0.6;
   const e = edgeDist(x, z);
   if (e > MAP.PLAY - 2 && e < MAP.FENCE) d += 0.5;           // бурьян на минной полосе
   for (const s of Object.values(SPAWNS)) if (Math.hypot(x - s.x, z - s.z) < 9) d *= 0.4;
   if (td < 2.2) d += 0.3;                                     // на брустверах
-  return clamp(d, 0, 1.3);
+  return clamp(d * (1 - bog * 2.2), 0, 1.3);
 }
 /** Для физики и воронок: сам кэш и его сетка. */
 export const heightGrid = () => ({ H, HN, HS, R, GD, DN, DS });

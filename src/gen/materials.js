@@ -71,7 +71,7 @@ export function buildMaterials() {
 
   const paints = [[78, 104, 118], [124, 118, 92], [104, 44, 36], [72, 88, 62], [150, 146, 136]];
   M.carPaint = paints.map(p => surf(TX.rustMetal(p, 0.9), { rough: 0.62, metal: 0.4 }));
-  M.burnt = surf(TX.rustMetal([52, 38, 30], 1.2), { rough: 0.9, metal: 0.25 });
+  M.burnt = surf(TX.rustMetal([48, 40, 34], 0.8), { rough: 0.9, metal: 0.25, color: 0x8c8580 });
   M.barrel = [[60, 84, 110], [120, 40, 32], [70, 86, 58], [118, 104, 60]].map(p => surf(TX.rustMetal(p, 0.8, 256), { rough: 0.6, metal: 0.45 }));
   M.steel = std({ color: 0x3c3e3e, roughness: 0.55, metalness: 0.7 });
   M.rust = surf(TX.rustMetal([96, 60, 40], 1.0, 256), { rough: 0.8, metal: 0.4 });
@@ -128,24 +128,34 @@ export function buildMaterials() {
   // --- наполнение карты: вышки, мосты, обломки фронта, записки ---
   M.stumpTop = std({ map: TX.stumpTop(), roughness: 0.95 });
   M.holes = std({ map: TX.bulletHoles(), transparent: true, depthWrite: false, roughness: 0.9, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
-  M.paper = [
-    ['#ПОЗЫВНЫЕ', 'Берёза-1 — КП', 'Гром — миномёт', 'Сокол — птичка (дрон)', 'Ветер-2 — лев. фланг', 'Ветер-3 — прав. фланг', 'Лесник — разведка', 'Кедр — эвакуация', '', 'не путать Ветер с Вепрем!'],
-    ['#СВЯЗЬ', 'осн. 146.500', 'зап. 147.225', 'шифр. таблица — у ст.', '', '#ПАРОЛЬ', 'ЗВЕЗДА — отзыв МАЯК', 'с 00:00 — ИВОЛГА /', '                     КОСТЁР'],
-    ['#ОРИЕНТИРЫ', '1 — вышка (пожарная)', '2 — водокачка лагеря', '3 — сгоревшая БМП', '4 — остров, беседка', '5 — мост (заминир.?)'],
-    ['#СХЕМА', 'наши —', 'они — >', 'X — пулемёт']
-  ].map((l, i) => std({ map: TX.paperSheet(l, { grid: i === 3, sketch: i === 3, bg: i === 1 ? '#e2dcc6' : undefined, ink: i === 2 ? '#2a2a2a' : undefined }), roughness: 0.9, side: THREE.DoubleSide }));
+  // записки — одним атласом 2×2 (один материал на все листы: меньше вызовов отрисовки)
+  {
+    const sheets = [
+      ['#ПОЗЫВНЫЕ', 'Берёза-1 — КП', 'Гром — миномёт', 'Сокол — птичка (дрон)', 'Ветер-2 — лев. фланг', 'Ветер-3 — прав. фланг', 'Лесник — разведка', 'Кедр — эвакуация', '', 'не путать Ветер с Вепрем!'],
+      ['#СВЯЗЬ', 'осн. 146.500', 'зап. 147.225', 'шифр. таблица — у ст.', '', '#ПАРОЛЬ', 'ЗВЕЗДА — отзыв МАЯК', 'с 00:00 — ИВОЛГА /', '                     КОСТЁР'],
+      ['#ОРИЕНТИРЫ', '1 — вышка (пожарная)', '2 — водокачка лагеря', '3 — сгоревшая БМП', '4 — остров, беседка', '5 — мост (заминир.?)'],
+      ['#СХЕМА', 'наши —', 'они — >', 'X — пулемёт']
+    ].map((l, i) => TX.paperSheet(l, { grid: i === 3, sketch: i === 3, bg: i === 1 ? '#e2dcc6' : undefined, ink: i === 2 ? '#2a2a2a' : undefined }).image);
+    const W = sheets[0].width, H = sheets[0].height, c = document.createElement('canvas');
+    c.width = W * 2; c.height = H * 2;
+    const x = c.getContext('2d');
+    sheets.forEach((im, i) => x.drawImage(im, (i % 2) * W, (i >> 1) * H));
+    const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+    M.paperAtlas = std({ map: t, roughness: 0.9, side: THREE.DoubleSide });
+    M.paper = [0, 1, 2, 3].map(i => ({ atlas: i }));
+  }
   M.towerSteel = surf(TX.rustMetal([88, 98, 90], 0.55, 256), { rough: 0.62, metal: 0.55 });
   M.towerRed = surf(TX.rustMetal([150, 58, 44], 0.45, 256), { rough: 0.6, metal: 0.45 });
   M.tankCamp = surf(TX.rustMetal([96, 130, 150], 0.5), { rough: 0.55, metal: 0.5 });
   M.tankGrey = surf(TX.rustMetal([104, 112, 104], 0.6), { rough: 0.55, metal: 0.5 });
   M.grate = std({ color: 0x3f403c, roughness: 0.6, metalness: 0.6 });
   M.armor = surf(TX.rustMetal([66, 72, 50], 0.35), { rough: 0.7, metal: 0.4 });
-  M.armorBurnt = surf(TX.rustMetal([46, 38, 32], 1.3), { rough: 0.85, metal: 0.3 });
-  M.heli = surf(TX.rustMetal([78, 88, 64], 0.35), { rough: 0.62, metal: 0.35 });
+  M.armorBurnt = surf(TX.rustMetal([40, 38, 36], 0.45), { rough: 0.88, metal: 0.3, color: 0x77726c });
+  M.heli = surf(TX.rustMetal([78, 88, 64], 0.18), { rough: 0.62, metal: 0.35 });
   M.heliBelly = surf(TX.rustMetal([120, 136, 140], 0.3), { rough: 0.6, metal: 0.35 });
   M.brass = std({ color: 0xb08a3c, roughness: 0.35, metalness: 0.9 });
   M.olive = std({ color: 0x4a5236, roughness: 0.6, metalness: 0.3 });
-  M.peat = new THREE.MeshStandardMaterial({ color: 0x1b1a10, roughness: 0.12, metalness: 0.15, transparent: true, opacity: 0.92, depthWrite: true });
+  M.peat = new THREE.MeshStandardMaterial({ color: 0x2a2918, roughness: 0.1, metalness: 0.2 });
   // обугливание и дрожь от взрывов — для всего, что строится из досок, брёвен, жести
   for (const m of [M.planks, M.planksDark, M.planksPaint, M.logWall, M.logEnd, M.roofRust, M.roofTar, M.deadwood, M.crate, M.wattle, M.sack, M.canvas,
     M.brick, M.concrete, M.planksCamp, M.planksWhite, M.planksCream, M.roofCamp, M.plaster, M.paintRed, M.steelPipe, M.barkLog, M.rust, M.burnt, M.dark, ...M.carPaint, M.towerSteel, M.towerRed, M.tankCamp, M.tankGrey, M.grate, M.armor, M.armorBurnt, M.heli, M.heliBelly, M.stumpTop, M.stone]) injectStructFX(m);

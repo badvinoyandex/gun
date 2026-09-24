@@ -1869,11 +1869,11 @@ function streamCarve(x, z, h) {
   if (_sq.d > 9) return h;
   const d = _sq.d, bw = STREAM_BW;
   const bank = _sq.bed + 2.9 * smoothstep(bw, bw + 3.4, d) + Math.max(0, d - bw - 3.4) * 0.35;
-  const k = 0.5;
+  const k = 0.2;
   const m = h - bank;
   const carved = m > k ? bank : m < -k ? h : bank + (m + k) * (m + k) / (4 * k);
   const taper = 1 - smoothstep(_sq.st.len - 26, _sq.st.len - 8, _sq.s);
-  return carved + 0.6 * Math.exp(-Math.pow((d - bw - 4.3) / 1.35, 2)) * taper;
+  return carved + 0.8 * Math.exp(-Math.pow((d - bw - 4.3) / 1.35, 2)) * taper;
 }
 var BOGS = [{ x: -22, z: 52, r: 10.5 }, { x: 22, z: -52, r: 10.5 }];
 var symN = (x, z, f, o = 0) => 0.5 * (vnoise(x * f + o, z * f - o) + vnoise(-x * f + o, -z * f - o));
@@ -3784,7 +3784,7 @@ function buildMaterials() {
   M.brick = std({ color: 8276534, roughness: 0.95 });
   const paints = [[78, 104, 118], [124, 118, 92], [104, 44, 36], [72, 88, 62], [150, 146, 136]];
   M.carPaint = paints.map((p) => surf(rustMetal(p, 0.9), { rough: 0.62, metal: 0.4 }));
-  M.burnt = surf(rustMetal([52, 38, 30], 1.2), { rough: 0.9, metal: 0.25 });
+  M.burnt = surf(rustMetal([48, 40, 34], 0.8), { rough: 0.9, metal: 0.25, color: 9209216 });
   M.barrel = [[60, 84, 110], [120, 40, 32], [70, 86, 58], [118, 104, 60]].map((p) => surf(rustMetal(p, 0.8, 256), { rough: 0.6, metal: 0.45 }));
   M.steel = std({ color: 3948094, roughness: 0.55, metalness: 0.7 });
   M.rust = surf(rustMetal([96, 60, 40], 1, 256), { rough: 0.8, metal: 0.4 });
@@ -3836,24 +3836,36 @@ function buildMaterials() {
   M.flagRag = std({ color: 9316898, roughness: 0.95, side: THREE5.DoubleSide });
   M.stumpTop = std({ map: stumpTop(), roughness: 0.95 });
   M.holes = std({ map: bulletHoles(), transparent: true, depthWrite: false, roughness: 0.9, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
-  M.paper = [
-    ["#\u041F\u041E\u0417\u042B\u0412\u041D\u042B\u0415", "\u0411\u0435\u0440\u0451\u0437\u0430-1 \u2014 \u041A\u041F", "\u0413\u0440\u043E\u043C \u2014 \u043C\u0438\u043D\u043E\u043C\u0451\u0442", "\u0421\u043E\u043A\u043E\u043B \u2014 \u043F\u0442\u0438\u0447\u043A\u0430 (\u0434\u0440\u043E\u043D)", "\u0412\u0435\u0442\u0435\u0440-2 \u2014 \u043B\u0435\u0432. \u0444\u043B\u0430\u043D\u0433", "\u0412\u0435\u0442\u0435\u0440-3 \u2014 \u043F\u0440\u0430\u0432. \u0444\u043B\u0430\u043D\u0433", "\u041B\u0435\u0441\u043D\u0438\u043A \u2014 \u0440\u0430\u0437\u0432\u0435\u0434\u043A\u0430", "\u041A\u0435\u0434\u0440 \u2014 \u044D\u0432\u0430\u043A\u0443\u0430\u0446\u0438\u044F", "", "\u043D\u0435 \u043F\u0443\u0442\u0430\u0442\u044C \u0412\u0435\u0442\u0435\u0440 \u0441 \u0412\u0435\u043F\u0440\u0435\u043C!"],
-    ["#\u0421\u0412\u042F\u0417\u042C", "\u043E\u0441\u043D. 146.500", "\u0437\u0430\u043F. 147.225", "\u0448\u0438\u0444\u0440. \u0442\u0430\u0431\u043B\u0438\u0446\u0430 \u2014 \u0443 \u0441\u0442.", "", "#\u041F\u0410\u0420\u041E\u041B\u042C", "\u0417\u0412\u0415\u0417\u0414\u0410 \u2014 \u043E\u0442\u0437\u044B\u0432 \u041C\u0410\u042F\u041A", "\u0441 00:00 \u2014 \u0418\u0412\u041E\u041B\u0413\u0410 /", "                     \u041A\u041E\u0421\u0422\u0401\u0420"],
-    ["#\u041E\u0420\u0418\u0415\u041D\u0422\u0418\u0420\u042B", "1 \u2014 \u0432\u044B\u0448\u043A\u0430 (\u043F\u043E\u0436\u0430\u0440\u043D\u0430\u044F)", "2 \u2014 \u0432\u043E\u0434\u043E\u043A\u0430\u0447\u043A\u0430 \u043B\u0430\u0433\u0435\u0440\u044F", "3 \u2014 \u0441\u0433\u043E\u0440\u0435\u0432\u0448\u0430\u044F \u0411\u041C\u041F", "4 \u2014 \u043E\u0441\u0442\u0440\u043E\u0432, \u0431\u0435\u0441\u0435\u0434\u043A\u0430", "5 \u2014 \u043C\u043E\u0441\u0442 (\u0437\u0430\u043C\u0438\u043D\u0438\u0440.?)"],
-    ["#\u0421\u0425\u0415\u041C\u0410", "\u043D\u0430\u0448\u0438 \u2014", "\u043E\u043D\u0438 \u2014 >", "X \u2014 \u043F\u0443\u043B\u0435\u043C\u0451\u0442"]
-  ].map((l, i) => std({ map: paperSheet(l, { grid: i === 3, sketch: i === 3, bg: i === 1 ? "#e2dcc6" : void 0, ink: i === 2 ? "#2a2a2a" : void 0 }), roughness: 0.9, side: THREE5.DoubleSide }));
+  {
+    const sheets = [
+      ["#\u041F\u041E\u0417\u042B\u0412\u041D\u042B\u0415", "\u0411\u0435\u0440\u0451\u0437\u0430-1 \u2014 \u041A\u041F", "\u0413\u0440\u043E\u043C \u2014 \u043C\u0438\u043D\u043E\u043C\u0451\u0442", "\u0421\u043E\u043A\u043E\u043B \u2014 \u043F\u0442\u0438\u0447\u043A\u0430 (\u0434\u0440\u043E\u043D)", "\u0412\u0435\u0442\u0435\u0440-2 \u2014 \u043B\u0435\u0432. \u0444\u043B\u0430\u043D\u0433", "\u0412\u0435\u0442\u0435\u0440-3 \u2014 \u043F\u0440\u0430\u0432. \u0444\u043B\u0430\u043D\u0433", "\u041B\u0435\u0441\u043D\u0438\u043A \u2014 \u0440\u0430\u0437\u0432\u0435\u0434\u043A\u0430", "\u041A\u0435\u0434\u0440 \u2014 \u044D\u0432\u0430\u043A\u0443\u0430\u0446\u0438\u044F", "", "\u043D\u0435 \u043F\u0443\u0442\u0430\u0442\u044C \u0412\u0435\u0442\u0435\u0440 \u0441 \u0412\u0435\u043F\u0440\u0435\u043C!"],
+      ["#\u0421\u0412\u042F\u0417\u042C", "\u043E\u0441\u043D. 146.500", "\u0437\u0430\u043F. 147.225", "\u0448\u0438\u0444\u0440. \u0442\u0430\u0431\u043B\u0438\u0446\u0430 \u2014 \u0443 \u0441\u0442.", "", "#\u041F\u0410\u0420\u041E\u041B\u042C", "\u0417\u0412\u0415\u0417\u0414\u0410 \u2014 \u043E\u0442\u0437\u044B\u0432 \u041C\u0410\u042F\u041A", "\u0441 00:00 \u2014 \u0418\u0412\u041E\u041B\u0413\u0410 /", "                     \u041A\u041E\u0421\u0422\u0401\u0420"],
+      ["#\u041E\u0420\u0418\u0415\u041D\u0422\u0418\u0420\u042B", "1 \u2014 \u0432\u044B\u0448\u043A\u0430 (\u043F\u043E\u0436\u0430\u0440\u043D\u0430\u044F)", "2 \u2014 \u0432\u043E\u0434\u043E\u043A\u0430\u0447\u043A\u0430 \u043B\u0430\u0433\u0435\u0440\u044F", "3 \u2014 \u0441\u0433\u043E\u0440\u0435\u0432\u0448\u0430\u044F \u0411\u041C\u041F", "4 \u2014 \u043E\u0441\u0442\u0440\u043E\u0432, \u0431\u0435\u0441\u0435\u0434\u043A\u0430", "5 \u2014 \u043C\u043E\u0441\u0442 (\u0437\u0430\u043C\u0438\u043D\u0438\u0440.?)"],
+      ["#\u0421\u0425\u0415\u041C\u0410", "\u043D\u0430\u0448\u0438 \u2014", "\u043E\u043D\u0438 \u2014 >", "X \u2014 \u043F\u0443\u043B\u0435\u043C\u0451\u0442"]
+    ].map((l, i) => paperSheet(l, { grid: i === 3, sketch: i === 3, bg: i === 1 ? "#e2dcc6" : void 0, ink: i === 2 ? "#2a2a2a" : void 0 }).image);
+    const W = sheets[0].width, H2 = sheets[0].height, c = document.createElement("canvas");
+    c.width = W * 2;
+    c.height = H2 * 2;
+    const x = c.getContext("2d");
+    sheets.forEach((im3, i) => x.drawImage(im3, i % 2 * W, (i >> 1) * H2));
+    const t = new THREE5.CanvasTexture(c);
+    t.colorSpace = THREE5.SRGBColorSpace;
+    t.anisotropy = 4;
+    M.paperAtlas = std({ map: t, roughness: 0.9, side: THREE5.DoubleSide });
+    M.paper = [0, 1, 2, 3].map((i) => ({ atlas: i }));
+  }
   M.towerSteel = surf(rustMetal([88, 98, 90], 0.55, 256), { rough: 0.62, metal: 0.55 });
   M.towerRed = surf(rustMetal([150, 58, 44], 0.45, 256), { rough: 0.6, metal: 0.45 });
   M.tankCamp = surf(rustMetal([96, 130, 150], 0.5), { rough: 0.55, metal: 0.5 });
   M.tankGrey = surf(rustMetal([104, 112, 104], 0.6), { rough: 0.55, metal: 0.5 });
   M.grate = std({ color: 4145212, roughness: 0.6, metalness: 0.6 });
   M.armor = surf(rustMetal([66, 72, 50], 0.35), { rough: 0.7, metal: 0.4 });
-  M.armorBurnt = surf(rustMetal([46, 38, 32], 1.3), { rough: 0.85, metal: 0.3 });
-  M.heli = surf(rustMetal([78, 88, 64], 0.35), { rough: 0.62, metal: 0.35 });
+  M.armorBurnt = surf(rustMetal([40, 38, 36], 0.45), { rough: 0.88, metal: 0.3, color: 7828076 });
+  M.heli = surf(rustMetal([78, 88, 64], 0.18), { rough: 0.62, metal: 0.35 });
   M.heliBelly = surf(rustMetal([120, 136, 140], 0.3), { rough: 0.6, metal: 0.35 });
   M.brass = std({ color: 11569724, roughness: 0.35, metalness: 0.9 });
   M.olive = std({ color: 4870710, roughness: 0.6, metalness: 0.3 });
-  M.peat = new THREE5.MeshStandardMaterial({ color: 1776144, roughness: 0.12, metalness: 0.15, transparent: true, opacity: 0.92, depthWrite: true });
+  M.peat = new THREE5.MeshStandardMaterial({ color: 2763032, roughness: 0.1, metalness: 0.2 });
   for (const m of [
     M.planks,
     M.planksDark,
@@ -4520,14 +4532,14 @@ function grassDensityExact(x, z) {
   if (td < 1.2) return 0;
   if (streamAt(x, z).d < STREAM_BW + 0.25) return 0;
   const bog2 = inBog(x, z);
-  if (bog2 > 0.55) return 0.12;
+  if (bog2 > 0.35) return 0;
   let d = (1 - (FD ? forestFast(x, z) : forestDensity(x, z))) * 0.85 + 0.12 + edge;
   d += (1 - smoothstep(1.05, 1.6, rho)) * 0.6;
   const e = edgeDist(x, z);
   if (e > MAP.PLAY - 2 && e < MAP.FENCE) d += 0.5;
   for (const s of Object.values(SPAWNS)) if (Math.hypot(x - s.x, z - s.z) < 9) d *= 0.4;
   if (td < 2.2) d += 0.3;
-  return clamp(d, 0, 1.3);
+  return clamp(d * (1 - bog2 * 2.2), 0, 1.3);
 }
 var heightGrid = () => ({ H, HN, HS, R, GD, DN, DS });
 
@@ -9869,9 +9881,9 @@ function fireTower(t, R2) {
   addBox(x, fy + 2.7, z, 2 * CW, 0.4, 2 * CW, rot, { walk: true });
   const tq = L(0.7, 0, -0.9);
   box(M.planks, tq.x, fy + 0.8, tq.z, 1, 0.05, 0.6, { rot, tile: 1, collide: true });
-  place(M.paper[2], new THREE22.PlaneGeometry(0.42, 0.56), tq.x, fy + 0.83, tq.z, [-Math.PI / 2, rot + 0.3, 0]);
+  place(M.paperAtlas, paperGeo(2, 0.42, 0.56), tq.x, fy + 0.83, tq.z, [-Math.PI / 2, rot + 0.3, 0]);
   cyl(M.steel, tq.x - 0.2, fy + 0.86, tq.z + 0.1, 0.16, 0.16, 0.03, { seg: 16 });
-  place(M.paper[0], new THREE22.PlaneGeometry(0.21, 0.28), ...(() => {
+  place(M.paperAtlas, paperGeo(0, 0.21, 0.28), ...(() => {
     const q = L(-CW + 0.04, 0, 0.6);
     return [q.x, fy + 1.3, q.z];
   })(), [0, rot + Math.PI / 2, 0.05]);
@@ -10021,7 +10033,7 @@ function bridge(b, R2) {
   endStruct();
   const sx = ax - ux * 1.2 + nx * 1.1, sz = az - uz * 1.2 + nz * 1.1, sy = hFast(sx, sz);
   cyl(M.deadwood, sx, sy + 0.7, sz, 0.05, 0.05, 1.4, { seg: 5 });
-  place(M.paper[3], new THREE22.PlaneGeometry(0.3, 0.4), sx, sy + 1.2, sz + 0.06, [0, rot + Math.PI, 0.08]);
+  place(M.paperAtlas, paperGeo(3, 0.3, 0.4), sx, sy + 1.2, sz + 0.06, [0, rot + Math.PI, 0.08]);
 }
 function ford(f, R2) {
   const [ax, az] = f.a, [bx, bz] = f.b, L = Math.hypot(bx - ax, bz - az), ux = (bx - ax) / L, uz = (bz - az) / L;
@@ -10030,10 +10042,10 @@ function ford(f, R2) {
   for (let i = 0; i < pa.count; i++) {
     const vy = pa.getY(i), k = 1 + 0.12 * Math.sin(pa.getX(i) * 4.3 + pa.getZ(i) * 2.9);
     pa.setXYZ(i, pa.getX(i) * k, vy > 0.35 ? 0.35 + (vy - 0.35) * 0.25 : vy, pa.getZ(i) * k);
-    const wet = vy < 0.2 ? 0.55 : 0.85;
-    col[i * 3] = wet;
-    col[i * 3 + 1] = wet * 1.02;
-    col[i * 3 + 2] = wet * 0.95;
+    const wet = vy < 0.2;
+    col[i * 3] = wet ? 0.36 : 0.62;
+    col[i * 3 + 1] = wet ? 0.42 : 0.63;
+    col[i * 3 + 2] = wet ? 0.3 : 0.58;
   }
   rock.setAttribute("color", new THREE22.BufferAttribute(col, 3));
   rock.computeVertexNormals();
@@ -10139,14 +10151,15 @@ var STREAM_FS = (
     vec3 nrm = normalize(vec3((r1 - 0.5) * 0.5 + (r3 - 0.5) * 0.25, 1.0, (r2 - 0.5) * 0.5));
     vec3 V = normalize(cameraPosition - vW);
     float fr = 0.04 + 0.96 * pow(1.0 - max(dot(nrm, V), 0.0), 5.0);
-    vec3 col = mix(uDeep, uSky, fr);
+    // \u0432\u043E\u0434\u0430 \u0432 \u0442\u0435\u043D\u0438\u0441\u0442\u043E\u043C \u043E\u0432\u0440\u0430\u0433\u0435: \u0442\u043E\u0440\u0444\u044F\u043D\u0430\u044F, \u043E\u0442\u0440\u0430\u0436\u0430\u0435\u0442 \u043D\u0435\u0431\u043E \u0442\u043E\u043B\u044C\u043A\u043E \u043F\u043E\u0434 \u043E\u0441\u0442\u0440\u044B\u043C \u0443\u0433\u043B\u043E\u043C
+    vec3 col = mix(uDeep, uSky * 0.5, fr * 0.85);
     vec3 Hh = normalize(uSunDir + V);
-    col += uSun * pow(max(dot(nrm, Hh), 0.0), 120.0) * 2.5;
+    col += uSun * pow(max(dot(nrm, Hh), 0.0), 160.0) * 1.6;
     // \u043F\u0435\u043D\u0430 \u043D\u0430 \u043F\u0435\u0440\u0435\u043A\u0430\u0442\u0430\u0445 \u0438 \u0443 \u0431\u0435\u0440\u0435\u0433\u043E\u0432
     float edge = smoothstep(0.35, 0.5, abs(vUv.x - 0.5));
     float foam = smoothstep(0.62, 0.8, r3 + vSlope * 18.0 + edge * 0.25) * (0.35 + vSlope * 25.0);
-    col = mix(col, vec3(0.82, 0.84, 0.8) * (0.4 + 0.6 * length(uSky)), clamp(foam, 0.0, 0.7));
-    float a = mix(0.72, 0.95, fr) * (1.0 - smoothstep(0.44, 0.5, abs(vUv.x - 0.5)) * 0.6);
+    col = mix(col, vec3(0.7, 0.72, 0.68) * (0.3 + 0.35 * length(uSky)), clamp(foam * 0.6, 0.0, 0.45));
+    float a = mix(0.6, 0.88, fr) * (1.0 - smoothstep(0.42, 0.5, abs(vUv.x - 0.5)) * 0.7);
     gl_FragColor = vec4(col, a);
     #include <fog_fragment>
   }`
@@ -10166,7 +10179,7 @@ function streamWater(st) {
     }
     if (i < n2) {
       const k = i * 2;
-      idx2.push(k, k + 2, k + 1, k + 1, k + 2, k + 3);
+      idx2.push(k, k + 1, k + 2, k + 1, k + 3, k + 2);
     }
   }
   const g = new THREE22.BufferGeometry();
@@ -10177,7 +10190,7 @@ function streamWater(st) {
   g.setIndex(idx2);
   g.computeBoundingSphere();
   STREAM_FX.mat ??= new THREE22.ShaderMaterial({
-    uniforms: THREE22.UniformsUtils.merge([THREE22.UniformsLib.fog, { uT: { value: 0 }, uSky: { value: new THREE22.Color(0.5, 0.6, 0.7) }, uSun: { value: new THREE22.Color(1, 1, 1) }, uDeep: { value: new THREE22.Color(0.06, 0.07, 0.04) }, uSunDir: { value: V(0.3, 0.8, 0.2) } }]),
+    uniforms: THREE22.UniformsUtils.merge([THREE22.UniformsLib.fog, { uT: { value: 0 }, uSky: { value: new THREE22.Color(0.5, 0.6, 0.7) }, uSun: { value: new THREE22.Color(1, 1, 1) }, uDeep: { value: new THREE22.Color(0.1, 0.11, 0.07) }, uSunDir: { value: V(0.3, 0.8, 0.2) } }]),
     vertexShader: STREAM_VS,
     fragmentShader: STREAM_FS,
     transparent: true,
@@ -10389,10 +10402,10 @@ function bog(b, R2) {
     scene.add(im3);
     NO_REFLECT.push(im3);
   };
-  scatter2(sedgeGeo(), 260, (x, z) => hFast(x, z) > lvl + 0.04, [0.8, 1.5]);
-  scatter2(cattailGeo(), 70, (x, z) => {
+  scatter2(sedgeGeo(), 150, (x, z) => hFast(x, z) > lvl + 0.1, [0.7, 1.3]);
+  scatter2(cattailGeo(), 55, (x, z) => {
     const h = hFast(x, z);
-    return h > lvl - 0.1 && h < lvl + 0.08;
+    return h > lvl - 0.1 && h < lvl + 0.08 && inBog(x, z) < 0.8;
   }, [0.8, 1.2]);
   for (let i = 0; i < 6; i++) {
     const a = R2() * TAU, r = Math.sqrt(R2()) * b.r * 0.9, x = b.x + Math.cos(a) * r, z = b.z + Math.sin(a) * r, y = hFast(x, z) - 0.2;
@@ -10449,9 +10462,14 @@ function updateLandmarks(dt, sky2) {
 var V2 = (x, y, z) => new THREE23.Vector3(x, y, z);
 var WRECKS = { heli: null, art: null, mg: [], bmp: null, tank: null, smokes: [] };
 function sheet(i, x, y, z, rot, o = {}) {
-  const g = new THREE23.PlaneGeometry(o.w ?? 0.21, o.h ?? 0.28);
-  if (o.flat) place(M.paper[i % M.paper.length], g, x, y + 4e-3, z, [-Math.PI / 2, rot, 0]);
-  else place(M.paper[i % M.paper.length], g, x, y, z, [o.tilt ?? 0, rot, sr(-0.08, 0.08)]);
+  const g = paperGeo(i, o.w ?? 0.21, o.h ?? 0.28);
+  if (o.flat) place(M.paperAtlas, g, x, y + 4e-3, z, [-Math.PI / 2, rot, 0]);
+  else place(M.paperAtlas, g, x, y, z, [o.tilt ?? 0, rot, sr(-0.08, 0.08)]);
+}
+function paperGeo(i, w, h) {
+  const g = new THREE23.PlaneGeometry(w, h), uv = g.attributes.uv, u0 = i % 2 * 0.5, v0 = 0.5 - (i % 4 >> 1) * 0.5;
+  for (let k = 0; k < uv.count; k++) uv.setXY(k, u0 + uv.getX(k) * 0.5, v0 + uv.getY(k) * 0.5);
+  return g;
 }
 function casings(x, z, n2, big, R2, spread = 1.4, dirA = 0) {
   const g = big ? new THREE23.CylinderGeometry(0.075, 0.08, 0.45, 10) : new THREE23.CylinderGeometry(6e-3, 65e-4, 0.054, 6);
@@ -10477,8 +10495,8 @@ function planWrecks() {
   const [hx2, hz] = findSpot(-100, -22, 6.5, { sym: true });
   WRECKS.heli = { x: hx2, z: hz, rot: 0.9 };
   WRECKS.art = { x: -hx2, z: -hz, rot: Math.atan2(hx2, hz) };
-  keep(hx2, hz, 8);
-  keep(-hx2, -hz, 6);
+  keep(hx2, hz, 11);
+  keep(-hx2, -hz, 7);
   {
     const [x, z] = findSpot(-50, 7, 2.6, { sym: true });
     WRECKS.mg.push({ x, z, home: SPAWNS.A }, { x: -x, z: -z, home: SPAWNS.D });
@@ -12337,7 +12355,7 @@ var setPanelGoneHandler = (fn) => {
 };
 function removePanel(p) {
   if (p.mesh) {
-    p.mesh.updateMatrixWorld(true);
+    p.mesh.parent?.updateMatrixWorld(true);
     const g = p.mesh.geometry.clone().applyMatrix4(p.mesh.matrixWorld);
     g.computeBoundingBox();
     p.parts = [{ mat: p.mesh.material, geo: g }];
@@ -12653,6 +12671,8 @@ function updateWall(w) {
   let top = w.base;
   for (const q of w.bags) if (!q.dead) top = Math.max(top, q.top0 - (q.top0 - q.base0) * 0.58 * (q.sag || 0));
   const c = w.col;
+  w.y1max ??= c.y1;
+  top = Math.min(top, w.y1max);
   if (Math.abs(c.y1 - top) < 0.02) return;
   removeStaticCollider(c);
   c.y1 = Math.max(c.y0 + 0.05, top);
@@ -12907,6 +12927,7 @@ function addDoor({ hx: hx2, hz, y, closed, openBy, w = 0.9, h = 2, t = 0.05, mat
   const cClosed = col(closed), cOpen = col(closed + openBy);
   (startOpen ? cClosed : cOpen).dead = true;
   const d = { pivot, mesh, closed, openBy, cur, target: cur, w, h, hx: hx2, hz, y, cClosed, cOpen, panel: curPanel() };
+  pivot.updateMatrixWorld(true);
   attachMesh(mesh);
   DOORS.push(d);
   return d;
@@ -13008,6 +13029,7 @@ function buildInteract() {
     for (let i = 0; i < HOLES.cap; i++) im3.setMatrixAt(i, ZERO2);
     im3.frustumCulled = false;
     im3.renderOrder = 4;
+    im3.count = 0;
     scene.add(im3);
     HOLES.ims.push(im3);
     HOLES.owner.push(new Array(HOLES.cap).fill(null));
@@ -13034,6 +13056,7 @@ function addHole(p, n2, kind, owner = null) {
   _q8.multiply(new THREE28.Quaternion().setFromAxisAngle(_z, Math.random() * TAU));
   _s5.setScalar(sr(0.7, 1.25));
   im3.setMatrixAt(i, _m7.compose(_v5.copy(p).addScaledVector(n2, 6e-3), _q8, _s5));
+  im3.count = Math.max(im3.count, i + 1);
   im3.instanceMatrix.needsUpdate = true;
   HOLES.owner[kind][i] = owner;
 }
