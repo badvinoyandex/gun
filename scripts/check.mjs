@@ -1,6 +1,6 @@
 // Проверка плана карты без браузера: симметрия, геометрия озера и троп,
 // минное поле, отсутствие NaN в рельефе. Запуск: npm run check
-import { MAP, SPAWNS, PATHS, TRENCHES, terrainH, baseH, lakeRho, pathInfluence, edgeDist, inMinefield, CRATERS } from '../src/world/layout.js';
+import { MAP, SPAWNS, PATHS, TRENCHES, CLUSTERS, terrainH, baseH, lakeRho, pathInfluence, edgeDist, inMinefield, CRATERS, inCamp } from '../src/world/layout.js';
 
 let fails = 0;
 const ok = (cond, msg) => { console.log((cond ? '  ✓ ' : '  ✗ ') + msg); if (!cond) fails++; };
@@ -11,7 +11,10 @@ let nan = 0, maxAsym = 0;
 for (let x = -120; x <= 120; x += 3) for (let z = -120; z <= 120; z += 3) {
   const h = terrainH(x, z);
   if (!Number.isFinite(h)) nan++;
-  // центральная симметрия: высоты в (x,z) и (−x,−z) совпадают (кроме микрошума)
+  // центральная симметрия: высоты в (x,z) и (−x,−z) совпадают (кроме микрошума);
+  // турбаза и лагерь намеренно разные — их окрестности не сравниваем
+  const nearCluster = (px, pz) => Math.hypot(px - CLUSTERS.T.x, pz - CLUSTERS.T.z) < 42 || inCamp(px, pz, 14) || Math.hypot(px + CLUSTERS.K.x, pz + CLUSTERS.K.z) < 0;
+  if (nearCluster(x, z) || nearCluster(-x, -z)) continue;
   maxAsym = Math.max(maxAsym, Math.abs(h - terrainH(-x, -z)));
 }
 ok(nan === 0, 'нет NaN в высотах');
@@ -30,7 +33,7 @@ for (let t = 0; t <= 1; t += 0.01) if (lakeRho(A.x + (D.x - A.x) * t, A.z + (D.z
 ok(wet > 12, `линия A–D проходит через озеро на ${wet}% длины`);
 
 console.log('Тропы и окопы');
-ok(PATHS.length % 2 === 1, `троп ${PATHS.length}: все парные + кольцевая`);
+ok(PATHS.length > 20, `троп ${PATHS.length}`);
 ok(PATHS.some(p => p.lit) && PATHS.some(p => !p.lit), 'часть троп освещена, часть — нет');
 ok(TRENCHES.length >= 8 && TRENCHES.length % 2 === 0, `окопов ${TRENCHES.length}, парами`);
 ok(pathInfluence(A.x, A.z) > 0.5, 'от базы A отходят тропы');
@@ -40,7 +43,16 @@ const floor = TRENCHES.map(t => {
   const l = Math.hypot(x2 - x, z2 - z), nx = -(z2 - z) / l * 3, nz = (x2 - x) / l * 3;
   return terrainH(x, z) - Math.min(terrainH(x + nx, z + nz), terrainH(x - nx, z - nz));
 });
-ok(floor.every(d => d < -1.0), `дно окопов глубже 1 м (мин. ${Math.min(...floor.map(d => -d)).toFixed(2)} м)`);
+const dry = TRENCHES.map((t, i) => [t, floor[i]]).filter(([t]) => !t.lake);
+ok(dry.every(([, d]) => d < -1.0), `дно окопов глубже 1 м (мин. ${Math.min(...dry.map(([, d]) => -d)).toFixed(2)} м)`);
+// береговые: укрытие считается от гребня вала, дно — выше воды
+const lakeT = TRENCHES.filter(t => t.lake).map(t => {
+  const i = Math.floor(t.pts.length / 2), [x, z] = t.pts[i], [x2, z2] = t.pts[i + 1];
+  const l = Math.hypot(x2 - x, z2 - z), nx = -(z2 - z) / l, nz = (x2 - x) / l;
+  const f = terrainH(x, z), crest = Math.max(terrainH(x + nx * 1.6, z + nz * 1.6), terrainH(x - nx * 1.6, z - nz * 1.6));
+  return { cover: crest - f, dry: f > MAP.WATER_Y + 0.2 };
+});
+ok(lakeT.length >= 8 && lakeT.every(q => q.cover > 1.4 && q.dry), `береговые окопы: ${lakeT.length}, укрытие ≥ 1.4 м, дно выше воды (мин. ${Math.min(...lakeT.map(q => q.cover)).toFixed(2)} м)`);
 
 // окопы не пересекают тропы (разрыв у тропы делается автоматически)
 const crossing = TRENCHES.filter(t => t.pts.some(([x, z]) => pathInfluence(x, z, 0.8) > 0)).length;

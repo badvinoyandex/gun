@@ -231,6 +231,15 @@ function groundMaterial() {
         // тлеющие угли: мерцают под пеплом, ночью заметно подсвечивают землю
         float emb = gBurn.g * (0.6 + 0.4 * sin(uFxT * 7.0 + gNoise(vWPos.xz * 3.0) * 12.0)) * smoothstep(0.45, 0.85, gNoise(vWPos.xz * 4.3 + uFxT * 0.2));
         totalEmissiveRadiance += vec3(1.0, 0.3, 0.05) * emb * emb * 1.4;
+        // каустики: пляшущая сетка света на дне у берега
+        float uw = clamp((${MAP.WATER_Y.toFixed(3)} - vWPos.y) * 3.0, 0.0, 1.0) * clamp(1.0 - (${MAP.WATER_Y.toFixed(3)} - vWPos.y) * 0.35, 0.0, 1.0);
+        if (uw > 0.0 && uCaus > 0.0) {
+          vec2 cp = vWPos.xz * 0.9;
+          float c1 = abs(sin(cp.x * 2.1 + sin(cp.y * 1.7 + uFxT * 0.9) * 1.6 + uFxT * 0.7));
+          float c2 = abs(sin(cp.y * 2.3 + sin(cp.x * 1.3 - uFxT * 0.8) * 1.8 - uFxT * 0.6));
+          float caus = pow(1.0 - min(c1, c2), 6.0);
+          totalEmissiveRadiance += diffuseColor.rgb * caus * uw * uCaus * 2.5;
+        }
       `);
   };
   m.customProgramCacheKey = () => 'ground-v2';

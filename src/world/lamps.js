@@ -4,7 +4,7 @@ import { rng, clamp, lerp, smoothstep, polyAt, TAU } from '../core/math.js';
 import { PATHS, terrainH, isFree, keep, lakeRho, pathInfluence } from './layout.js';
 import { hFast } from './heightcache.js';
 import { M, TEX } from '../gen/materials.js';
-import { box, cyl, beam, place } from './builders.js';
+import { box, cyl, beam, place, beginStruct, panel, noPanel, endStruct } from './builders.js';
 import { addCircle } from '../core/colliders.js';
 
 /* ============================================================================
@@ -34,7 +34,7 @@ export function addLamp(o) {
     pos: new THREE.Vector3(o.x, o.y, o.z), kind: o.kind, on: o.on ?? true, flick: o.flick ?? 0,
     ground: o.ground ?? hFast(o.x, o.z), color: new THREE.Color(o.color ?? k.color), dir: o.dir || null,
     power: o.power ?? k.power, range: o.range ?? k.range, lens: o.lens || null, level: 0, seed: LAMPS.length * 13.7,
-    pool: o.pool ?? k.pool
+    pool: o.pool ?? k.pool, camp: !!o.camp
   };
   LAMPS.push(L);
   return L;
@@ -60,7 +60,7 @@ export function planLamps() {
         if (!isFree(x2, z2, 0.25, { pathPad: -0.55, trenchPad: 1.0, lake: 1.06 })) continue;
         x = x2; z = z2; side = -side;
       }
-      const post = { x, z, rot: Math.atan2(-nx * side, -nz * side), path: p, prev, on: R() < 0.8, flick: R() < 0.22 ? R.range(0.4, 1) : 0, bench: R() < 0.3 };
+      const post = { x, z, rot: Math.atan2(-nx * side, -nz * side), path: p, prev, on: R() < (p.camp ? 0.75 : 0.8), flick: p.camp ? R.range(0.5, 1) : R() < 0.22 ? R.range(0.4, 1) : 0, bench: !p.camp && R() < 0.3, camp: !!p.camp };
       POSTS.push(post);
       keep(x, z, 0.6);
       if (post.bench) {
@@ -88,7 +88,7 @@ function buildPost(p) {
   beam(M.steel, new THREE.Vector3(p.x, y + H - 0.05, p.z), new THREE.Vector3(ax, ay, az), 0.02);
   // плафон
   const shade = new THREE.ConeGeometry(0.26, 0.2, 12, 1, true);
-  place(M.carPaint[3], shade, ax, ay - 0.12, az, 0);
+  place(p.camp ? M.bone : M.carPaint[3], shade, ax, ay - 0.12, az, 0);
   place(M.dark, new THREE.CylinderGeometry(0.04, 0.05, 0.1, 8), ax, ay, az, 0);
   const lens = M.lampGlass.clone();
   const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.085, 10, 8), lens);
@@ -105,34 +105,40 @@ function buildPost(p) {
       scene.add(tube);
     }
   }
-  addLamp({ kind: 'post', x: ax, y: ay - 0.22, z: az, ground: hFast(ax, az), on: p.on, flick: p.flick, lens, dir: new THREE.Vector3(0, -1, 0) });
+  addLamp({ kind: 'post', x: ax, y: ay - 0.22, z: az, ground: hFast(ax, az), on: p.on, flick: p.flick, lens, dir: new THREE.Vector3(0, -1, 0), camp: p.camp, color: p.camp ? 0xe6e2a2 : undefined, power: p.camp ? 26 : undefined });
 }
 /** Лавочка: бетонные опоры, рейки; у некоторых — выломана спинка. */
-export function bench(x, z, rot, R) {
+export function bench(x, z, rot, R, o = {}) {
   const y = hFast(x, z);
   const c = Math.cos(rot), s = Math.sin(rot);
   const P = (lx, lz) => [x + lx * c + lz * s, z - lx * s + lz * c];
+  beginStruct({ kind: 'bench', x, z, rot, w: 1.8, d: 0.6, h: 0.9, fy: y, fuel: 0.35 });
+  noPanel();
   for (const lx of [-0.75, 0.75]) {
     const [px, pz] = P(lx, 0);
-    box(M.concrete, px, y + 0.22, pz, 0.12, 0.45, 0.46, { rot, tile: 0.8 });
+    box(o.leg ?? M.concrete, px, y + 0.22, pz, 0.12, 0.45, 0.46, { rot, tile: 0.8 });
   }
-  const broken = R() < 0.35;
+  // сиденье и спинка — одним телом: взрывом лавку срывает с опор
+  panel('prop', { hp: 0.3, density: 500 });
+  const broken = R() < 0.35, slat = o.slat ?? M.planksDark;
   for (let i = 0; i < 3; i++) {
     const [px, pz] = P(0, -0.15 + i * 0.15);
     if (broken && i === 2 && R() < 0.5) continue;
-    box(M.planksDark, px, y + 0.47, pz, 1.8, 0.04, 0.11, { rot, tile: 1.2 });
+    box(slat, px, y + 0.47, pz, 1.8, 0.04, 0.11, { rot, tile: 1.2 });
   }
   if (!broken) for (let i = 0; i < 2; i++) {
     const [px, pz] = P(0, -0.27);
-    box(M.planksDark, px, y + 0.68 + i * 0.16, pz, 1.8, 0.1, 0.035, { rot, rx: -0.15, tile: 1.2 });
-  }
-  // урна
-  if (R() < 0.6) {
-    const [ux, uz] = P(1.35, 0);
-    cyl(M.rust, ux, y + 0.33, uz, 0.2, 0.24, 0.66, { seg: 10, open: true });
+    box(slat, px, y + 0.68 + i * 0.16, pz, 1.8, 0.1, 0.035, { rot, rx: -0.15, tile: 1.2 });
   }
   const [cx, cz] = P(0, 0);
   addCircle(cx, cz, 0.45, y, y + 0.5);
+  // урна
+  if (R() < 0.6) {
+    const [ux, uz] = P(1.35, 0);
+    panel('prop', { hp: 0.25, density: 700, float: 0, burnable: false });
+    cyl(M.rust, ux, y + 0.33, uz, 0.2, 0.24, 0.66, { seg: 10, open: true });
+  }
+  endStruct();
 }
 
 /* ---------- Визуальные слои света ---------- */
@@ -293,7 +299,12 @@ export function updateLamps(lampOn) {
     const L = LAMPS[i];
     let lv = L.on ? 1 : 0;
     if (L.kind === 'fire') lv = 0.75 + 0.18 * Math.sin(t * 7.1 + L.seed) + 0.12 * Math.sin(t * 13.3 + L.seed * 2) + 0.08 * Math.sin(t * 23.1);
-    if (L.flick && L.on) {
+    if (L.camp && L.on) {
+      // лагерь: старые лампы еле живы — дрожат, гаснут на секунды, вспыхивают
+      const n1 = Math.sin(t * 2.3 + L.seed) * Math.sin(t * 0.7 + L.seed * 1.3), n2 = Math.sin(t * 17 + L.seed * 3) * Math.sin(t * 29 + L.seed);
+      lv *= n1 > 0.72 ? 0.02 : (0.45 + 0.25 * n2 + 0.2 * Math.sin(t * 3.1 + L.seed));
+      if (Math.sin(t * 0.37 + L.seed * 2.1) > 0.93) lv *= Math.abs(Math.sin(t * 43 + L.seed)) > 0.5 ? 1.3 : 0.05;
+    } else if (L.flick && L.on) {
       // неисправная лампа: короткие провалы и дрожь накала
       const f = Math.sin(t * 1.7 + L.seed) * Math.sin(t * 5.3 + L.seed * 0.7);
       if (f > 0.55 * L.flick + 0.2) lv *= 0.08 + 0.3 * Math.abs(Math.sin(t * 41 + L.seed));

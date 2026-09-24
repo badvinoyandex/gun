@@ -18,6 +18,7 @@ export function initAudio() {
   AUDIO.master = ctx.createGain(); AUDIO.master.gain.value = 0.8;
   const comp = ctx.createDynamicsCompressor(); comp.threshold.value = -10; comp.ratio.value = 6;
   AUDIO.master.connect(comp); comp.connect(ctx.destination);
+  AUDIO.comp = comp;
   // розовый шум для ветра и взрывов
   const len = ctx.sampleRate * 4;
   noiseBuf = ctx.createBuffer(1, len, ctx.sampleRate);
@@ -106,6 +107,30 @@ export function whistleSound(dur = 0.9) {
   o.type = 'sine'; o.frequency.setValueAtTime(1500 + Math.random() * 300, t); o.frequency.exponentialRampToValueAtTime(420, t + dur);
   g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.05, t + dur * 0.7); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
   o.connect(g); g.connect(AUDIO.master); o.start(t); o.stop(t + dur + 0.05);
+}
+/** Удар корпуса дрона о препятствие. */
+export function bump(k) {
+  if (!ready()) return;
+  const t = AUDIO.ctx.currentTime;
+  burst(t, { type: 'lowpass', f: 900, f1: 150, vol: clamp(k * 0.04, 0.05, 0.4), a: 0.002, dec: 0.15 });
+  burst(t, { type: 'bandpass', f: 2400, q: 3, vol: clamp(k * 0.02, 0.02, 0.2), a: 0.001, dec: 0.05 });
+}
+/** Всплеск: хлопок по воде и журчание. */
+export function splashSound(k = 1) {
+  if (!ready()) return;
+  const t = AUDIO.ctx.currentTime;
+  burst(t, { type: 'bandpass', f: 700, f1: 300, q: 0.8, vol: clamp(0.12 * k, 0.02, 0.35), a: 0.005, dec: 0.3 });
+  burst(t + 0.05, { type: 'highpass', f: 2500, vol: clamp(0.05 * k, 0.01, 0.15), a: 0.02, dec: 0.5, len: 5 });
+}
+let underF = null;
+/** Под водой звук глохнет: общий фильтр низких частот. */
+export function setUnderwater(on) {
+  if (!AUDIO.ctx) return;
+  if (!underF) {
+    underF = AUDIO.ctx.createBiquadFilter(); underF.type = 'lowpass'; underF.frequency.value = 20000;
+    AUDIO.master.disconnect(); AUDIO.master.connect(underF); underF.connect(AUDIO.comp);
+  }
+  underF.frequency.setTargetAtTime(on ? 380 : 20000, AUDIO.ctx.currentTime, 0.08);
 }
 /** Всплеск/чавканье шага по луже и грязи. */
 export function squelch(k) {

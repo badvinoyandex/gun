@@ -4,6 +4,7 @@ import { rng, TAU, lerp, smoothstep, fbm } from '../core/math.js';
 import { MAP, lakeRho, lakeContour, lakeXZ, terrainH, ISLAND, pathInfluence, trenchDist, keep, CLUSTERS } from './layout.js';
 import { M, TEX } from '../gen/materials.js';
 import { injectWind } from './wind.js';
+import { FXU } from '../core/fxu.js';
 import { addBox } from '../core/colliders.js';
 
 /* ============================================================================
@@ -31,7 +32,8 @@ const WATER_FS = /* glsl */`
   uniform sampler2D tRefl, tNormal;
   uniform float uTime, uHasRefl, uNight, uWind;
   uniform vec3 uSunDir, uSunCol, uSky, uDeep, uShallow, uMoonDir;
-  uniform vec4 uRip[4];
+  uniform vec4 uRip[8];
+  uniform float uRain, uFxT;
   varying vec3 vW; varying vec4 vRUV; varying float vDepth;
   #include <common>
   #include <fog_pars_fragment>
@@ -43,7 +45,7 @@ const WATER_FS = /* glsl */`
     vec3 n3 = texture2D(tNormal, uv * 0.43 + vec2(-uTime * 0.03, uTime * 0.02)).xyz * 2.0 - 1.0;
     vec2 slope = (n1.xy + n2.xy) * (0.35 + uWind * 0.5) + n3.xy * 0.12;
     // кольца от взрывов и от дрона над водой
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < 8; i++) {
       vec4 r = uRip[i];
       float age = uTime - r.z;
       if (age < 0.0 || age > 6.0 || r.w <= 0.0) continue;
@@ -52,13 +54,38 @@ const WATER_FS = /* glsl */`
       float ring = sin((dist - front) * 5.5) * exp(-abs(dist - front) * 0.9) * exp(-age * 0.7) * r.w;
       slope += (dist > 0.01 ? d / dist : vec2(0.0)) * ring * 0.9;
     }
+    // капли дождя: мелкие расходящиеся кольца по всей глади
+    if (uRain > 0.01) {
+      for (int k = 0; k < 2; k++) {
+        vec2 cuv = uv * (1.6 + float(k) * 1.3) + float(k) * 3.7;
+        vec2 ci = floor(cuv), cf = fract(cuv) - 0.5;
+        float h = fract(sin(dot(ci, vec2(127.1, 311.7)) + float(k) * 7.0) * 43758.5453);
+        vec2 o = vec2(fract(h * 13.7), fract(h * 71.3)) - 0.5;
+        float ph = fract(uFxT * (0.8 + h * 0.7) + h);
+        vec2 d = cf - o * 0.6; float r = length(d);
+        float ring = sin((r - ph * 0.45) * 55.0) * smoothstep(0.05, 0.0, abs(r - ph * 0.45)) * (1.0 - ph) * step(h, uRain);
+        slope += d / max(r, 1e-3) * ring * 0.5;
+      }
+    }
     vec3 n = normalize(vec3(slope.x, 1.0, slope.y));
     vec3 V = normalize(cameraPosition - vW);
+    float camDist = length(cameraPosition - vW);
+    // снизу: окно Снелла — небо только в конусе над головой, дальше полное отражение тёмной воды
+    if (cameraPosition.y < vW.y) {
+      float up = max(dot(-V, vec3(0.0, 1.0, 0.0)), 0.0);
+      float win = smoothstep(0.62, 0.8, up + slope.x * 0.08);
+      vec3 under = mix(uDeep * 2.2 + uShallow * 0.6, uSky * 0.9 + uSunCol * 0.15, win);
+      gl_FragColor = vec4(under, 0.97);
+      #include <tonemapping_fragment>
+      #include <colorspace_fragment>
+      return;
+    }
     float ndv = max(dot(V, n), 0.0);
     float fres = 0.03 + 0.97 * pow(1.0 - ndv, 5.0);
     vec3 refl = uSky;
     if (uHasRefl > 0.5) {
-      vec4 ruv = vRUV; ruv.xy += slope * 0.09 * ruv.w;
+      // вблизи камеры отражение почти не искажается: иначе у самой воды «рвёт» картинку
+      vec4 ruv = vRUV; ruv.xy += slope * 0.09 * ruv.w * clamp(camDist / 14.0, 0.12, 1.0);
       refl = texture2DProj(tRefl, ruv).rgb;
     }
     vec3 body = mix(uShallow, uDeep, smoothstep(0.0, 2.4, vDepth));
@@ -165,9 +192,9 @@ export function buildLake() {
     uMoonDir: { value: new THREE.Vector3(0, 1, 0) },
     uSky: { value: new THREE.Color(0.5, 0.6, 0.7) }, uDeep: { value: new THREE.Color(0.012, 0.018, 0.014) },
     uShallow: { value: new THREE.Color(0.06, 0.055, 0.035) },
-    uRip: { value: [0, 1, 2, 3].map(() => new THREE.Vector4(0, 0, -99, 0)) }
+    uRip: { value: [0, 1, 2, 3, 4, 5, 6, 7].map(() => new THREE.Vector4(0, 0, -99, 0)) }, uRain: { value: 0 }, uFxT: { value: 0 }
   }]);
-  const mat = new THREE.ShaderMaterial({ uniforms, vertexShader: WATER_VS, fragmentShader: WATER_FS, transparent: true, fog: true, depthWrite: true });
+  const mat = new THREE.ShaderMaterial({ uniforms, vertexShader: WATER_VS, fragmentShader: WATER_FS, transparent: true, fog: true, depthWrite: true, side: THREE.DoubleSide });
   mat.uniforms.tNormal.value = TEX.water;
   if (mirror) { mat.uniforms.tRefl.value = mirror.rt.texture; mat.uniforms.uTexMat.value = mirror.texMat; }
   const mesh = new THREE.Mesh(waterGeometry(), mat);
@@ -414,6 +441,7 @@ export function updateLake(sky) {
   u.uSky.value.copy(sky.fogColor).multiplyScalar(0.9);
   u.uNight.value = sky.night;
   u.uWind.value = sky.wind;
+  u.uRain.value = FXU.uRain.value; u.uFxT.value = FRAME.t;
   // вода темнеет к ночи, днём — торфяная
   u.uDeep.value.setRGB(lerp(0.014, 0.004, sky.night), lerp(0.02, 0.006, sky.night), lerp(0.016, 0.01, sky.night));
   u.uShallow.value.setRGB(lerp(0.07, 0.012, sky.night), lerp(0.062, 0.013, sky.night), lerp(0.04, 0.016, sky.night));

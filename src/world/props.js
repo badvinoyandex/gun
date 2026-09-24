@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { scene, FRAME } from '../core/env.js';
 import { rng, TAU, clamp } from '../core/math.js';
-import { MAP, lakeContour, isFree, keep, edgeDist, terrainH, terrainNormal, SPAWNS, CLUSTERS } from './layout.js';
+import { MAP, lakeContour, isFree, keep, edgeDist, terrainH, terrainNormal, SPAWNS, CLUSTERS, trenchDist, lakeRho, inCamp, PADS, KEEPOUT, TW, padRectDist } from './layout.js';
 import { hFast } from './heightcache.js';
 import { M } from '../gen/materials.js';
 import { place, box, cyl } from './builders.js';
@@ -25,10 +25,34 @@ const RING_CARS = [
   [2.6, 'sedan', -3.3, 0.5, { burnt: true }],
   [0.25, 'van', 3.6, 3.0, { paint: 4 }]
 ];
+/** Место под машину: ни одна точка кузова не в окопе, не на площадке дома, не в чужой зоне и не в воде. */
+export function carFree(x, z, rot, L, W) {
+  const c = Math.cos(rot), s = Math.sin(rot);
+  for (const [a, b] of [[0, 0], [-W / 2, -L / 2], [W / 2, -L / 2], [-W / 2, L / 2], [W / 2, L / 2], [0, -L / 2], [0, L / 2]]) {
+    const px = x + a * c + b * s, pz = z - a * s + b * c;
+    if (trenchDist(px, pz) < TW.cap + 0.7 || lakeRho(px, pz) < 1.12 || inCamp(px, pz, 1)) return false;
+    for (const p of PADS) if (padRectDist(p, px, pz) < 0.6) return false;
+    for (const k of KEEPOUT) if ((k.x - px) ** 2 + (k.z - pz) ** 2 < (k.r + 0.3) ** 2) return false;
+  }
+  return true;
+}
+const CAR_DIM = { sedan: [4.2, 1.7], van: [4.4, 2.0] };
+const PLACED = [];
 export function planProps() {
-  for (const [phi, type, off] of RING_CARS) for (const k of [0, 1]) {
-    const [x, z] = carPos(phi + k * Math.PI, off);
-    keep(x, z, type === 'van' ? 3 : 2.6);
+  // пара машин (A/D) сдвигается вдоль кольцевой, пока обе не встанут на свободное место
+  for (const car of RING_CARS) {
+    const [phi, type, off, rotAdd] = car, [L, W] = CAR_DIM[type];
+    let ok = false;
+    for (let i = 0; i < 40 && !ok; i++) {
+      const dphi = (i % 2 ? -1 : 1) * Math.ceil(i / 2) * 0.025;
+      ok = [0, 1].every(k => { const [x, z, rot] = carPos(phi + dphi + k * Math.PI, off); return carFree(x, z, rot + rotAdd, L, W); });
+      if (ok) car.phi = phi + dphi;
+    }
+    if (!ok) { console.warn('[props] нет места машине', type, phi); car.skip = true; continue; }
+    for (const k of [0, 1]) {
+      const [x, z] = carPos(car.phi + k * Math.PI, off);
+      keep(x, z, type === 'van' ? 3 : 2.6);
+    }
   }
 }
 function carPos(phi, off) {
@@ -83,7 +107,7 @@ function buildBarrels(R) {
       writeBarrel(b);
       if (PHYS.ready) {
         // бочка — полноценное тело: катится, бьётся о стволы и стены, падает в воронки
-        b.phys = addBody({ shape: 'cyl', size: [0.3, 0.88], mass: 18, pos: b.pos, quat: b.q, keep: true, friction: 0.7, restitution: 0.25, rolling: 0.02, damp: [0.08, 0.25],
+        b.phys = addBody({ shape: 'cyl', size: [0.3, 0.88], mass: 18, pos: b.pos, quat: b.q, keep: true, friction: 0.7, restitution: 0.25, rolling: 0.02, damp: [0.08, 0.25], float: 2.4, rad: 0.3,
           sync: (p, q) => { b.pos.copy(p); b.q.copy(q); b.col.x = p.x; b.col.z = p.z; b.col.y0 = p.y - 0.45; b.col.y1 = p.y + 0.45; writeBarrel(b); } });
       }
     });
@@ -192,9 +216,11 @@ function boulder(x, z, s, R) {
 
 export function buildProps() {
   const R = rng(2468);
-  for (const [phi, type, off, rotAdd, opt] of RING_CARS) for (const k of [0, 1]) {
-    const [x, z, rot] = carPos(phi + k * Math.PI, off);
-    vehicle(type, x, z, rot + rotAdd, { ...opt, seed: Math.round(phi * 100) + k });
+  for (const car of RING_CARS) for (const k of [0, 1]) {
+    if (car.skip) continue;
+    const [phi0, type, off, rotAdd, opt] = car;
+    const [x, z, rot] = carPos(car.phi + k * Math.PI, off);
+    vehicle(type, x, z, rot + rotAdd, { ...opt, seed: Math.round(phi0 * 100) + k });
   }
   // колонна на южной/северной тропе: УАЗ и «копейка» съехали в лес
   for (const s of [1, -1]) {

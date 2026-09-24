@@ -14,6 +14,7 @@ import { blastGlass } from './glass.js';
 import { woodCrack } from './audio.js';
 import { WEATHER, refreshRainHeights } from '../world/weather.js';
 import { refreshGrass } from '../world/groundcover.js';
+import { blastStructs, igniteStruct, structAt } from './structures.js';
 
 /* ============================================================================
    РАЗРУШЕНИЯ
@@ -119,7 +120,7 @@ function clods(x, y, z, size, n) {
     const pos = new THREE.Vector3(x + Math.cos(a) * 0.4, y + 0.3, z + Math.sin(a) * 0.4);
     scene.add(mesh);
     const b = addBody({ shape: 'sphere', size: [s], mass: 1.5, pos, vel: new THREE.Vector3(Math.cos(a) * Math.cos(e) * sp, Math.sin(e) * sp, Math.sin(a) * Math.cos(e) * sp),
-      ang: new THREE.Vector3(sr(-9, 9), sr(-9, 9), sr(-9, 9)), mesh, life: sr(4, 9), friction: 0.9, restitution: 0.1, rolling: 0.1, damp: [0.1, 0.4],
+      ang: new THREE.Vector3(sr(-9, 9), sr(-9, 9), sr(-9, 9)), mesh, life: sr(4, 9), friction: 0.9, restitution: 0.1, rolling: 0.1, damp: [0.1, 0.4], float: 0, rad: s, ccd: s,
       onDone: () => scene.remove(mesh) });
     if (!b) { scene.remove(mesh); return; }
     // сохранить масштаб при затухании: mesh.scale трогает физика, поэтому масштаб — через sync
@@ -134,7 +135,7 @@ export function splinters(x, y, z, dir, n, mat = M.logEnd, len = 0.5) {
     const pos = new THREE.Vector3(x + sr(-0.2, 0.2), y + sr(-0.3, 0.3), z + sr(-0.2, 0.2));
     const vel = new THREE.Vector3(dir.x * sr(2, 7) + sr(-2, 2), sr(1, 5), dir.z * sr(2, 7) + sr(-2, 2));
     const b = addBody({ shape: 'box', size: [w, w, L], mass: 0.3, pos, quat: new THREE.Quaternion().setFromEuler(new THREE.Euler(srnd() * 6, srnd() * 6, 0)), vel,
-      ang: new THREE.Vector3(sr(-12, 12), sr(-12, 12), sr(-12, 12)), life: sr(8, 16), restitution: 0.3, onDone: () => scene.remove(mesh) });
+      ang: new THREE.Vector3(sr(-12, 12), sr(-12, 12), sr(-12, 12)), life: sr(8, 16), restitution: 0.3, float: 1.8, rad: w, ccd: w * 1.5, onDone: () => scene.remove(mesh) });
     if (!b) { scene.remove(mesh); return; }
     b.sync = (p, q, f) => { mesh.position.copy(p); mesh.quaternion.copy(q); mesh.scale.set(w * f, w * f, L * f); };
   }
@@ -173,7 +174,7 @@ function dropBranches(t, dir, n, hot) {
     mesh.scale.setScalar(L); scene.add(mesh);
     const vel = new THREE.Vector3(dir.x * sr(1, 5) + sr(-1, 1), sr(-0.5, 2.5), dir.z * sr(1, 5) + sr(-1, 1));
     const b = addBody({ shape: 'box', size: [L, 0.1 * L, 0.3 * L], mass: 3 * L, pos, quat: new THREE.Quaternion().setFromEuler(new THREE.Euler(sr(-0.4, 0.4), srnd() * TAU, sr(-0.4, 0.4))), vel,
-      ang: new THREE.Vector3(sr(-4, 4), sr(-4, 4), sr(-4, 4)), life: sr(25, 45), friction: 0.9, restitution: 0.05, damp: [0.35, 0.6], onDone: () => scene.remove(mesh) });
+      ang: new THREE.Vector3(sr(-4, 4), sr(-4, 4), sr(-4, 4)), life: sr(25, 45), friction: 0.9, restitution: 0.05, damp: [0.35, 0.6], float: 1.6, rad: 0.06 * L, onDone: () => scene.remove(mesh) });
     if (!b) { scene.remove(mesh); continue; }
     b.sync = (p, q, f) => { mesh.position.copy(p); mesh.quaternion.copy(q); mesh.scale.setScalar(L * f); };
     if (hot && Math.random() < 0.45 * (1 - WEATHER.wet)) attachFire(b, sr(5, 12));
@@ -236,7 +237,7 @@ function breakTree(t, dir, k) {
   const tilt = new THREE.Quaternion().setFromAxisAngle(axis, 0.04 + k * 0.02);
   const crownR = t.h * (t.sp === 'birch' ? 0.1 : 0.12);
   const fall = { t, group, age: 0, L, hb, yc, frozen: false, axis, ang: 0.04, w: 0.35 + k * 0.4 };
-  fall.b = addBody({ shape: 'compound', mass: 120 + 900 * t.r * t.r * t.h, pos: start, quat: tilt, keep: true, friction: 1.0, restitution: 0.05, damp: [0.08, 0.35],
+  fall.b = addBody({ shape: 'compound', mass: 120 + 900 * t.r * t.r * t.h, pos: start, quat: tilt, keep: true, friction: 1.0, restitution: 0.05, damp: [0.08, 0.35], float: 1.3, rad: Math.max(0.1, rB),
     parts: [{ type: 'cyl', size: [Math.max(0.08, rB * 0.8), L], pos: [0, L / 2 - yc, 0] }, { type: 'cyl', size: [crownR, L * 0.5], pos: [0, L * 0.68 - yc, 0] }],
     vel: new THREE.Vector3(dir.x * (0.6 + k * 0.5), 0.2, dir.z * (0.6 + k * 0.5)), ang: axis.clone().multiplyScalar(0.35 + k * 0.45),
     sync: (p, q) => { group.position.copy(p); group.quaternion.copy(q); } });
@@ -259,7 +260,7 @@ function updateFalling(dt) {
       if (f.ang >= 1.45) settle(f);
       continue;
     }
-    if (f.age > 1.5 && (isSleeping(f.b) || f.age > 16)) settle(f);
+    if (f.age > 1.5 && !f.b.wet && (isSleeping(f.b) || f.age > 16)) settle(f);
   }
 }
 function settle(f) {
@@ -328,12 +329,16 @@ export function onBlast(x, gy, z, size, water, opt = {}) {
     else if (d < 3 * size) charTree(t, 0.25);
   }
   blastGlass(x, gy, z, size);
+  blastStructs(x, gy, z, size);
   blastImpulse(x, gy, z, 9 * size + 4, 9 * size);
   shockwave(x, gy, z, size, water);
   return true;
 }
 /** Близкая молния: бьёт в самое высокое дерево рядом — расщеп, огонь в кроне. */
 export function lightningHit(x, z) {
+  // молния бьёт в самое высокое: постройка рядом загорается
+  const st = structAt(x, z, 8).filter(s => s.kind === 'house');
+  if (st.length && Math.random() < 0.5) { igniteStruct(st[0], 0.4); scorch(st[0].center.x, st[0].center.z, 2, 0.6); return; }
   const list = treesNear(x, z, 14);
   if (!list.length) { if (Math.abs(x) < 120 && Math.abs(z) < 120) { scorch(x, z, 2, 0.8); ignite(x, z, 1, 0.8); } return; }
   const t = list.reduce((a, b) => (b.h > a.h ? b : a));

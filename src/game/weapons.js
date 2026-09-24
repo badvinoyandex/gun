@@ -11,6 +11,7 @@ import { splinters } from '../fx/destruction.js';
 import { explode } from '../fx/explosions.js';
 import { shotSound, whistleSound } from '../fx/audio.js';
 import { M } from '../gen/materials.js';
+import { hitPanel } from '../fx/structures.js';
 import { PL } from './player.js';
 
 /* ============================================================================
@@ -64,6 +65,7 @@ export function shoot() {
   if (h && h.idx <= -1000) { const pane = paneByIndex(h.idx); if (pane) breakPane(pane, _dir.clone(), 2.5, p); return; }
   if (h && h.body) { impulse(h.body, _dir.x * 6, _dir.y * 6, _dir.z * 6, p.x - h.body.pos.x, p.y - h.body.pos.y, p.z - h.body.pos.z); sparks(p, n, [2.2, 1.8, 1.2]); return; }
   const c = h && h.idx >= 0 ? COLLIDERS[h.idx] : null;
+  if (c && c.panel) { hitPanel(c.panel, p, _dir.clone(), c.panel.kind === 'wall' ? 0.05 : 0.12); return; }
   if (c && c.tree) { splinters(p.x, p.y, p.z, n, 3, M.logEnd, 0.18); puff(p, n, [0.35, 0.26, 0.18], 4); return; }
   if (c) { puff(p, n, [0.4, 0.36, 0.3], 5); sparks(p, n, [2, 1.6, 1]); return; }
   // земля или вода

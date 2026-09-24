@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import * as TX from './textures.js';
-import { injectWind } from '../world/wind.js';
+import { injectWind, injectStructFX } from '../world/wind.js';
 
 /* Общий набор материалов. Всё — MeshStandardMaterial: один закон освещения
    для всей сцены, чтобы закат и фонари одинаково ложились на кору, ржавчину и мох. */
@@ -104,4 +104,26 @@ export function buildMaterials() {
   TEX.water = TX.waterNormals();
   TEX.board = TX.boardSign(['ТУРБАЗА', '«ЛЕСНОЕ»', 'добро пожаловать']);
   TEX.boardK = TX.boardSign(['ЛЕСНИЧЕСТВО', 'КОРДОН №4', 'берегите лес'], '#3b3a2c');
+  // пионерлагерь «Волчонок»: выцветшая голубая и белая краска, облупленные вывески
+  M.planksCamp = surf(TX.planks([92, 118, 128]), { rough: 0.9 });
+  M.planksWhite = surf(TX.planks([176, 172, 158]), { rough: 0.88 });
+  M.planksCream = surf(TX.planks([150, 132, 96]), { rough: 0.9 });
+  M.roofCamp = surf(TX.corrugated([96, 104, 96], 1.2), { rough: 0.72, metal: 0.35, extra: { side: THREE.DoubleSide } });
+  M.plaster = std({ color: 0xb4b0a4, roughness: 0.97 });
+  M.paintRed = surf(TX.rustMetal([140, 44, 36], 0.9, 256), { rough: 0.65, metal: 0.3 });
+  M.steelPipe = surf(TX.rustMetal([110, 116, 112], 1.1, 256), { rough: 0.6, metal: 0.55 });
+  M.barkLog = surf(TX.planks([96, 78, 60], 3), { rough: 0.95 });
+  const sign = (t) => std({ map: t, roughness: 0.8, side: THREE.DoubleSide });
+  M.signGate = sign(TX.campSign(['ПИОНЕРСКИЙ ЛАГЕРЬ', '«ВОЛЧОНОК»'], { w: 1024, h: 200, sizes: [52, 84] }));
+  M.signDining = sign(TX.campSign(['СТОЛОВАЯ'], { w: 512, h: 128, bg: '#e2dccb', fg: '#9b2a22', sizes: [80] }));
+  M.signWC = sign(TX.campSign(['М', 'Ж'], { w: 256, h: 128, bg: '#dcd6c4', fg: '#2c4f6e', sizes: [70, 70] }));
+  M.signWash = sign(TX.campSign(['УМЫВАЛЬНИК'], { w: 512, h: 96, bg: '#2f5a6e', fg: '#e8e0c8', sizes: [60] }));
+  M.signShower = sign(TX.campSign(['ДУШ'], { w: 256, h: 96, bg: '#2f5a6e', fg: '#e8e0c8', sizes: [64] }));
+  M.signMotto = sign(TX.campSign(['БУДЬ ГОТОВ!', 'ВСЕГДА ГОТОВ!'], { w: 1024, h: 256, bg: '#a82a22', fg: '#efe6c8', sizes: [96, 96] }));
+  M.signCabin = [1, 2, 3, 4, 5, 6].map(n => sign(TX.campSign([`ОТРЯД ${n}`], { w: 256, h: 96, bg: '#e2dccb', fg: '#2c4f6e', sizes: [58] })));
+  M.wolf = sign(TX.wolfBadge());
+  M.flagRag = std({ color: 0x8e2a22, roughness: 0.95, side: THREE.DoubleSide });
+  // обугливание и дрожь от взрывов — для всего, что строится из досок, брёвен, жести
+  for (const m of [M.planks, M.planksDark, M.planksPaint, M.logWall, M.logEnd, M.roofRust, M.roofTar, M.deadwood, M.crate, M.wattle, M.sack, M.canvas,
+    M.brick, M.concrete, M.planksCamp, M.planksWhite, M.planksCream, M.roofCamp, M.plaster, M.paintRed, M.steelPipe, M.barkLog, M.rust, M.burnt, M.dark, ...M.carPaint]) injectStructFX(m);
 }

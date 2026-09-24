@@ -87,8 +87,8 @@ export function updateHud(dt) {
   const spd = Math.hypot(PL.vel.x, PL.vel.y, PL.vel.z) * 3.6;
   const osd = $('#osd');
   osd.innerHTML = PL.mode === 'drone'
-    ? `<b>${PL.cine ? 'ОБЛЁТ' : 'ДРОН'}</b> · ALT ${PL.agl.toFixed(1)} м · ${spd.toFixed(0)} км/ч · ${DIRS[Math.round(heading / 45) % 8]} ${heading.toFixed(0)}°<br><span>скорость ${PL.speed.toFixed(0)} м/с · ${PL.team === 'A' ? 'ALPHA' : 'DELTA'}</span>`
-    : `<b>ПЕШКОМ</b> · ${spd.toFixed(1)} км/ч · ${DIRS[Math.round(heading / 45) % 8]} ${heading.toFixed(0)}°${PL.swim ? ' · вплавь' : ''}<br><span>${PL.team === 'A' ? 'ALPHA' : 'DELTA'}</span>`;
+    ? `<b>${PL.cine ? 'ОБЛЁТ' : 'ДРОН'}</b>${PL.under ? ' · ПОД ВОДОЙ' : ''} · ALT ${PL.agl.toFixed(1)} м · ${spd.toFixed(0)} км/ч · ${DIRS[Math.round(heading / 45) % 8]} ${heading.toFixed(0)}°<br><span>скорость ${PL.speed.toFixed(0)} м/с · ${PL.team === 'A' ? 'ALPHA' : 'DELTA'}</span>`
+    : `<b>ПЕШКОМ</b> · ${spd.toFixed(1)} км/ч · ${DIRS[Math.round(heading / 45) % 8]} ${heading.toFixed(0)}°${PL.swim ? (PL.under ? ' · под водой' : ' · вплавь') : ''}${PL.air < 0.999 ? ` · воздух <b style="color:${PL.air < 0.3 ? '#ff7a5c' : '#cfe'}">${Math.round(PL.air * 100)}%</b>` : ''}${PL.burn > 0.2 ? ' · <b style="color:#ff9a5c">ОГОНЬ</b>' : ''}<br><span>${PL.team === 'A' ? 'ALPHA' : 'DELTA'}</span>`;
   const z = zoneInfo(), zel = $('#zone');
   zel.textContent = z ? z.text : '';
   zel.className = z && z.warn ? 'warn' : '';

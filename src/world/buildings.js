@@ -3,12 +3,13 @@ import { scene, Q } from '../core/env.js';
 import { rng, TAU } from '../core/math.js';
 import { addPad, keep, terrainH, CLUSTERS, pathInfluence } from './layout.js';
 import { M, TEX } from '../gen/materials.js';
-import { box, cyl, place, frame } from './builders.js';
+import { box, cyl, place, frame, beginStruct, panel, noPanel, endStruct } from './builders.js';
 import { addBox, addCircle as addCircle2 } from '../core/colliders.js';
 import { addLamp } from './lamps.js';
 import { addPane } from '../fx/glass.js';
 import { vehicle } from './vehicles.js';
 import { makeCloth } from './cloth.js';
+import { campHouses, campItems, planCamp, buildCampItem, buildCampExtras } from './camp.js';
 
 /* ============================================================================
    ПОСТРОЙКИ ТУРБАЗЫ И КОРДОНА
@@ -34,20 +35,25 @@ function wallPieces(len, h, openings) {
   return out;
 }
 
-/** Дом. Локально: x — ширина, z — глубина, фасад смотрит в +z. */
+/** Дом. Локально: x — ширина, z — глубина, фасад смотрит в +z.
+    Разрушаемая постройка: каждый кусок стены, скат кровли, дверь, наличник, мебель —
+    отдельная панель. Кровля держится на стенах: выбито больше половины — проваливается. */
 export function house(o) {
   const R = rng(o.seed ?? 1);
   const F = frame(o.x, o.z, o.rot);
   const { w, d } = o, h = o.h ?? 2.5;
   const base = o.pad.y ?? terrainH(o.x, o.z);
   const fy = base + 0.42;
-  const wallMat = o.style === 'log' ? M.logWall : o.style === 'paint' ? M.planksPaint : M.planks;
+  const wallMat = o.wallMat ?? (o.style === 'log' ? M.logWall : o.style === 'paint' ? M.planksPaint : M.planks);
+  const trimMat = o.trimMat ?? M.planks;
   const tile = o.style === 'log' ? 0.9 : 1.5;
   const P = (lx, lz) => F.p(lx, lz);
   const B = (mat, lx, ly, lz, sx, sy, sz, extra = {}) => {
     const [x, z] = P(lx, lz);
     box(mat, x, ly, z, sx, sy, sz, { rot: o.rot + (extra.r ?? 0), rx: extra.rx, rz: extra.rz, tile: extra.tile ?? tile, collide: extra.collide, walk: extra.walk, vertical: extra.vertical });
   };
+  const S = beginStruct({ kind: 'house', name: o.id, x: o.x, z: o.z, rot: o.rot, w, d, h, fy, fuel: o.style === 'log' ? 1.4 : 1, log: o.style === 'log' });
+  noPanel();
   // фундамент: столбики и цоколь
   for (const [lx, lz] of [[-w / 2, -d / 2], [w / 2, -d / 2], [-w / 2, d / 2], [w / 2, d / 2], [0, -d / 2], [0, d / 2]])
     B(M.concrete, lx * 0.96, base + 0.12, lz * 0.96, 0.4, 0.62, 0.4, { tile: 0.8 });
@@ -68,41 +74,50 @@ export function house(o) {
     left: { len: d - 2 * WALL_T, c: [-w / 2 + WALL_T / 2, 0], r: Math.PI / 2, axis: [0, -1] },
     right: { len: d - 2 * WALL_T, c: [w / 2 - WALL_T / 2, 0], r: Math.PI / 2, axis: [0, -1] }
   };
-  for (const [name, S] of Object.entries(sides)) {
-    for (const [u0, u1, y0, y1] of wallPieces(S.len, h, openings[name])) {
-      const uc = (u0 + u1) / 2 - S.len / 2;
-      const lx = S.c[0] + S.axis[0] * uc, lz = S.c[1] + S.axis[1] * uc;
-      B(wallMat, lx, fy + (y0 + y1) / 2, lz, u1 - u0, y1 - y0, WALL_T, { r: S.r, collide: true, walk: false });
+  const walls = [], bySide = {};
+  for (const [name, S2] of Object.entries(sides)) {
+    bySide[name] = [];
+    for (const [u0, u1, y0, y1] of wallPieces(S2.len, h, openings[name])) {
+      const uc = (u0 + u1) / 2 - S2.len / 2;
+      const lx = S2.c[0] + S2.axis[0] * uc, lz = S2.c[1] + S2.axis[1] * uc;
+      const [wx, wz] = P(lx, lz);
+      const pn = panel('wall', { hp: o.style === 'log' ? 1.7 : 1.0, load: true, mat: wallMat,
+        dims: { x: wx, y: fy + (y0 + y1) / 2, z: wz, sx: u1 - u0, sy: y1 - y0, sz: WALL_T, rot: o.rot + S2.r, log: o.style === 'log' } });
+      pn.u0 = u0; pn.u1 = u1; pn.y0 = y0; pn.y1 = y1;
+      B(wallMat, lx, fy + (y0 + y1) / 2, lz, u1 - u0, y1 - y0, WALL_T, { r: S2.r, collide: true, walk: false });
+      walls.push(pn); bySide[name].push(pn);
     }
-    // оформление проёмов
+    // оформление проёмов: держится на соседних кусках стены
     for (const op of openings[name]) {
-      const lx = S.c[0] + S.axis[0] * op.at, lz = S.c[1] + S.axis[1] * op.at;
-      const ax = S.axis[0], az = S.axis[1];
+      const lx = S2.c[0] + S2.axis[0] * op.at, lz = S2.c[1] + S2.axis[1] * op.at;
+      const ax = S2.axis[0], az = S2.axis[1];
       const nOut = name === 'front' ? [0, 1] : name === 'back' ? [0, -1] : name === 'left' ? [-1, 0] : [1, 0];
       const fw = op.w, fh = op.y1 - op.y0, cy = fy + (op.y0 + op.y1) / 2;
-      // наличники
-      for (const s of [-1, 1]) B(M.planks, lx + ax * s * (fw / 2 + 0.04) + nOut[0] * 0.11, cy, lz + az * s * (fw / 2 + 0.04) + nOut[1] * 0.11, 0.08, fh + 0.1, 0.04, { r: S.r, tile: 1 });
-      B(M.planks, lx + nOut[0] * 0.11, fy + op.y1 + 0.06, lz + nOut[1] * 0.11, fw + 0.2, 0.1, 0.05, { r: S.r, tile: 1 });
+      const ou0 = op.at - fw / 2 + S2.len / 2, ou1 = op.at + fw / 2 + S2.len / 2;
+      const around = bySide[name].filter(q => q.u1 > ou0 - 0.05 && q.u0 < ou1 + 0.05);
+      panel('trim', { hp: 0.5, sup: { list: around, frac: 0.99 }, density: 450 });
+      for (const s2 of [-1, 1]) B(trimMat, lx + ax * s2 * (fw / 2 + 0.04) + nOut[0] * 0.11, cy, lz + az * s2 * (fw / 2 + 0.04) + nOut[1] * 0.11, 0.08, fh + 0.1, 0.04, { r: S2.r, tile: 1 });
+      B(trimMat, lx + nOut[0] * 0.11, fy + op.y1 + 0.06, lz + nOut[1] * 0.11, fw + 0.2, 0.1, 0.05, { r: S2.r, tile: 1 });
       if (op.win) {
-        B(M.planks, lx + nOut[0] * 0.12, fy + op.y0 - 0.03, lz + nOut[1] * 0.12, fw + 0.2, 0.06, 0.12, { r: S.r, tile: 1 });
+        B(trimMat, lx + nOut[0] * 0.12, fy + op.y0 - 0.03, lz + nOut[1] * 0.12, fw + 0.2, 0.06, 0.12, { r: S2.r, tile: 1 });
         const state = R();
         if (state < 0.28) {
           // заколочено крест-накрест
           const [x, z] = P(lx + nOut[0] * 0.14, lz + nOut[1] * 0.14);
-          for (const a of [0.7, -0.6]) box(M.planksDark, x, cy, z, fw * 1.25, 0.12, 0.03, { rot: o.rot + S.r, rz: a * (R() < 0.3 ? 0.4 : 1), tile: 1 });
-          if (R() < 0.5) box(M.planksDark, x, cy + 0.25, z, fw * 1.1, 0.12, 0.03, { rot: o.rot + S.r, rz: 0.08, tile: 1 });
+          for (const a of [0.7, -0.6]) box(M.planksDark, x, cy, z, fw * 1.25, 0.12, 0.03, { rot: o.rot + S2.r, rz: a * (R() < 0.3 ? 0.4 : 1), tile: 1 });
+          if (R() < 0.5) box(M.planksDark, x, cy + 0.25, z, fw * 1.1, 0.12, 0.03, { rot: o.rot + S2.r, rz: 0.08, tile: 1 });
         } else {
           // рама с остатками стекла
-          B(M.planks, lx, cy, lz, 0.05, fh, 0.06, { r: S.r, tile: 1 });
-          B(M.planks, lx, cy + 0.15, lz, fw, 0.05, 0.06, { r: S.r, tile: 1 });
-          if (state < 0.45) B(M.glass, lx + ax * fw * 0.25, cy - 0.2, lz + az * fw * 0.25, fw * 0.4, 0.5, 0.01, { r: S.r });
+          B(trimMat, lx, cy, lz, 0.05, fh, 0.06, { r: S2.r, tile: 1 });
+          B(trimMat, lx, cy + 0.15, lz, fw, 0.05, 0.06, { r: S2.r, tile: 1 });
+          if (state < 0.45) B(M.glass, lx + ax * fw * 0.25, cy - 0.2, lz + az * fw * 0.25, fw * 0.4, 0.5, 0.01, { r: S2.r });
           else {
             // целая рама: четыре стекла (две створки, фрамуги сверху) — бьются взрывом и пулей
             const yb = cy + 0.15, yTop = fy + op.y1, yBot = fy + op.y0;
             for (const e of [-1, 1]) for (const [ya, yb2] of [[yBot, yb - 0.025], [yb + 0.025, yTop]]) {
               if (R() < 0.12) continue;
               const [px, pz] = P(lx + ax * e * fw * 0.25, lz + az * e * fw * 0.25);
-              addPane(px, (ya + yb2) / 2, pz, [0, o.rot + S.r, 0], fw / 2 - 0.05, yb2 - ya - 0.02);
+              addPane(px, (ya + yb2) / 2, pz, [0, o.rot + S2.r, 0], fw / 2 - 0.05, yb2 - ya - 0.02);
             }
           }
         }
@@ -110,16 +125,18 @@ export function house(o) {
       if (op.door) {
         const st = R();
         const [hx, hz] = P(lx - ax * fw / 2 + nOut[0] * 0.05, lz - az * fw / 2 + nOut[1] * 0.05);
+        panel('door', { hp: 0.4, density: 450 });
         if (st < 0.55) {
           // дверь распахнута на петлях
-          const a = o.rot + S.r + R.range(0.8, 1.5) * (R() < 0.5 ? 1 : -1);
-          const c = Math.cos(a), s = Math.sin(a);
-          box(M.planksDark, hx + c * 0.45, fy + 1.0, hz - s * 0.45, 0.9, 2.0, 0.05, { rot: a, tile: 1.2, vertical: true });
+          const a = o.rot + S2.r + R.range(0.8, 1.5) * (R() < 0.5 ? 1 : -1);
+          const c = Math.cos(a), s2 = Math.sin(a);
+          box(M.planksDark, hx + c * 0.45, fy + 1.0, hz - s2 * 0.45, 0.9, 2.0, 0.05, { rot: a, tile: 1.2, vertical: true });
         } else if (st < 0.8) {
           // сорвана и лежит у крыльца
           const [x, z] = P(lx + nOut[0] * 1.6, lz + nOut[1] * 1.6);
-          box(M.planksDark, x, terrainH(x, z) + 0.06, z, 0.9, 0.05, 2.0, { rot: o.rot + S.r + R.range(-0.4, 0.4), rx: 0.05, tile: 1.2 });
+          box(M.planksDark, x, terrainH(x, z) + 0.06, z, 0.9, 0.05, 2.0, { rot: o.rot + S2.r + R.range(-0.4, 0.4), rx: 0.05, tile: 1.2 });
         }
+        noPanel();
         // ступени крыльца
         for (let k = 0; k < 2; k++) {
           const off = 0.35 + k * 0.32;
@@ -128,10 +145,13 @@ export function house(o) {
       }
     }
   }
-  // углы сруба: выпуски брёвен
+  // углы сруба: выпуски брёвен держатся на крайних кусках двух стен
   if (o.style === 'log') {
     const stub = new THREE.CylinderGeometry(0.12, 0.12, 0.62, 7);
+    const edge = (name, atStart) => bySide[name].filter(q => atStart ? q.u0 < 0.05 : q.u1 > sides[name].len - 0.05);
+    const corners = { '-1,1': [...edge('front', true), ...edge('left', true)], '1,1': [...edge('front', false), ...edge('right', true)], '-1,-1': [...edge('back', true), ...edge('left', false)], '1,-1': [...edge('back', false), ...edge('right', false)] };
     for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+      panel('trim', { hp: 1.2, sup: { list: corners[sx + ',' + sz], frac: 0.99 }, density: 500 });
       for (let y = 0.1; y < h; y += 0.225) {
         const [x, z] = P(sx * (w / 2 - 0.1), sz * (d / 2 - 0.1));
         // венцы вперевязку: чётные — вдоль ширины, нечётные — вдоль глубины
@@ -141,52 +161,72 @@ export function house(o) {
     }
   }
 
-  // кровля: двускатная, конёк вдоль ширины
+  // кровля: двускатная, конёк вдоль ширины; каждый лист — отдельная панель
   const pitch = o.pitch ?? 0.6, over = 0.38, top = fy + h;
   const D2 = d / 2 + over, hr = (d / 2) * Math.tan(pitch), Ls = D2 / Math.cos(pitch);
-  const roofMat = o.roof === 'tar' ? M.roofTar : M.roofRust;
+  const roofMat = o.roofMat ?? (o.roof === 'tar' ? M.roofTar : M.roofRust);
   const nP = Math.ceil((w + 0.8) / 1.05), pw = (w + 0.8) / nP;
   const damage = o.damage ?? 0.3;
+  const roofSup = { list: walls, frac: 0.5 };
   for (let i = 0; i < nP; i++) {
     const lx = -w / 2 - 0.4 + pw * (i + 0.5);
-    for (const s of [-1, 1]) {
+    for (const s2 of [-1, 1]) {
       if (R() < damage * 0.4) continue;                        // дыра в кровле
       const sag = R() < damage * 0.3 ? R.range(0.05, 0.14) : 0;
-      B(roofMat, lx, top + hr - (D2 / 2) * Math.tan(pitch) - sag, s * D2 / 2, pw - 0.02, 0.03, Ls, { rx: s * pitch + R.range(-0.02, 0.02), tile: 1.2 });
+      panel('roof', { hp: 0.6, sup: { list: walls, frac: R.range(0.4, 0.62) }, density: 1400, float: 0, burnable: o.roof === 'tar' });
+      B(roofMat, lx, top + hr - (D2 / 2) * Math.tan(pitch) - sag, s2 * D2 / 2, pw - 0.02, 0.03, Ls, { rx: s2 * pitch + R.range(-0.02, 0.02), tile: 1.2 });
     }
   }
-  // стропила видны в дырах
+  // стропила: пара на каждом шаге — одна панель
   for (let i = 0; i <= nP; i += 1) {
     const lx = -w / 2 - 0.4 + pw * i;
-    for (const s of [-1, 1]) B(M.planksDark, lx, top + hr - (D2 / 2) * Math.tan(pitch) - 0.08, s * D2 / 2, 0.08, 0.12, Ls, { rx: s * pitch, tile: 1 });
+    panel('roof', { hp: 0.8, sup: roofSup, density: 500 });
+    for (const s2 of [-1, 1]) B(M.planksDark, lx, top + hr - (D2 / 2) * Math.tan(pitch) - 0.08, s2 * D2 / 2, 0.08, 0.12, Ls, { rx: s2 * pitch, tile: 1 });
   }
+  panel('roof', { hp: 1, sup: roofSup, density: 500 });
   B(M.planksDark, 0, top + hr - 0.02, 0, w + 0.8, 0.14, 0.14, { tile: 1 });
-  // фронтоны
+  // кровля для коллизий: ступенчатый «конёк» из боксов (без геометрии), падает вместе с кровлей
+  panel('roofcol', { mode: 'none', sup: roofSup });
+  for (let k = 0; k < 4; k++) {
+    const y0 = top + hr * k / 4 - 0.05, y1 = top + hr * (k + 1) / 4 + 0.05;
+    const half = D2 * (1 - (k + 0.5) / 4);
+    const [cx, cz] = P(0, 0);
+    addBox(cx, (y0 + y1) / 2, cz, w + 0.8, y1 - y0, half * 2, o.rot, { walk: true });
+  }
+  // фронтоны стоят на боковых стенах
   const tri = new THREE.Shape();
   tri.moveTo(-d / 2, 0); tri.lineTo(d / 2, 0); tri.lineTo(0, hr); tri.closePath();
   const tg = new THREE.ExtrudeGeometry(tri, { depth: 0.08, bevelEnabled: false });
   const tuv = tg.attributes.uv;
   for (let i = 0; i < tuv.count; i++) tuv.setXY(i, tuv.getX(i) / 1.5, tuv.getY(i) / 1.5);
-  for (const s of [-1, 1]) {
-    const [x, z] = P(s * (w / 2 - 0.04) - 0.04, 0);
+  for (const s2 of [-1, 1]) {
+    const [x, z] = P(s2 * (w / 2 - 0.04) - 0.04, 0);
+    panel('wall', { hp: 0.9, sup: { list: bySide[s2 < 0 ? 'left' : 'right'], frac: 0.5 }, mode: 'rigid', density: 450 });
     place(o.style === 'log' ? M.planksDark : wallMat, tg, x, top, z, [0, o.rot + Math.PI / 2, 0]);
   }
-  // печь с трубой
+  noPanel();
+  // печь с трубой — кирпич переживает пожар и взрыв
   if (o.stove) {
     const sx = o.stove[0], sz = o.stove[1];
     B(M.brick, sx, fy + 0.5, sz, 1.0, 1.0, 1.1, { collide: true, tile: 0.6 });
     B(M.brick, sx, fy + 1.6, sz - 0.2, 0.5, 1.2, 0.5, { tile: 0.6 });
     B(M.brick, sx, top + hr * 0.6, sz - 0.2, 0.42, hr * 1.6 + 0.6, 0.42, { tile: 0.6 });
+    const [cx, cz] = P(sx, sz - 0.2);
+    addBox(cx, (fy + 1 + top + hr * 1.4 + 0.3) / 2, cz, 0.5, top + hr * 1.4 + 0.3 - fy - 1, 0.5, o.rot);
   }
   // обстановка
-  if (o.interior !== false) furnish(o, R, F, fy, B);
+  if (o.interior !== false) (o.furnish ?? furnish)(o, R, F, fy, B);
+  noPanel();
   // окна, где ночью теплится свет (кто-то жжёт свечу)
   if (o.glow) {
     const [x, z] = P(o.glow[0], o.glow[1]);
-    addLamp({ kind: 'window', x, y: fy + 1.2, z, flick: 0.3, on: true, ground: fy });
+    S.glowLamp = addLamp({ kind: 'window', x, y: fy + 1.2, z, flick: 0.3, on: true, ground: fy });
     place(M.dark, new THREE.CylinderGeometry(0.06, 0.07, 0.22, 8), x, fy + 0.86, z, 0);
   }
-  HOUSES.push({ ...o, fy, top });
+  if (o.decor) o.decor(o, R, F, fy, B, S);
+  endStruct();
+  HOUSES.push({ ...o, fy, top: top + hr, struct: S });
+  return S;
 }
 
 /** Стол, лавки, кровать, мусор на полу. */
@@ -194,6 +234,7 @@ function furnish(o, R, F, fy, B) {
   const { w, d } = o;
   const tx = R.range(-w * 0.2, w * 0.2), tz = R.range(-d * 0.15, d * 0.1);
   const flipped = R() < 0.35;
+  panel('prop', { hp: 0.35, density: 450 });
   if (!flipped) {
     B(M.planks, tx, fy + 0.74, tz, 1.3, 0.05, 0.75, { tile: 1, collide: true });
     for (const [a, b] of [[-0.58, -0.3], [0.58, -0.3], [-0.58, 0.3], [0.58, 0.3]]) B(M.planksDark, tx + a, fy + 0.36, tz + b, 0.06, 0.72, 0.06, { tile: 1 });
@@ -202,14 +243,17 @@ function furnish(o, R, F, fy, B) {
     B(M.planks, tx, fy + 0.38, tz, 1.3, 0.75, 0.05, { tile: 1, collide: true, walk: false });
     for (const a of [-0.58, 0.58]) for (const b of [0.2, 0.55]) B(M.planksDark, tx + a, fy + 0.72 - 0.35 + b * 0, tz + b, 0.06, 0.06, 0.72, { tile: 1 });
   }
+  panel('prop', { hp: 0.3, density: 450 });
   B(M.planksDark, tx, fy + 0.42, tz + 0.7, 1.2, 0.05, 0.3, { tile: 1, rz: R.range(-0.1, 0.1) });
   // кровать с панцирной сеткой
   if (w > 4) {
+    panel('prop', { hp: 0.5, density: 1200, float: 0, burnable: false });
     const bx = -w / 2 + 1.1, bz = -d / 2 + 0.6;
     B(M.rust, bx, fy + 0.45, bz, 1.9, 0.05, 0.85, { tile: 1 });
     for (const [a, b] of [[-0.9, -0.4], [0.9, -0.4], [-0.9, 0.4], [0.9, 0.4]]) B(M.rust, bx + a, fy + 0.3, bz + b, 0.05, 0.6, 0.05, { tile: 1 });
   }
   // доски и обломки
+  noPanel();
   for (let i = 0; i < 4; i++) {
     B(M.planksDark, R.range(-w * 0.35, w * 0.35), fy + 0.04, R.range(-d * 0.35, d * 0.35), R.range(0.8, 1.8), 0.03, 0.14, { r: R.range(0, TAU), rz: R.range(-0.08, 0.08), tile: 1 });
   }
@@ -243,13 +287,20 @@ function woodpile(x, z, rot, len = 3, rows = 5) {
 }
 function outhouse(x, z, rot) {
   const y = terrainH(x, z), F = frame(x, z, rot);
+  beginStruct({ kind: 'shed', x, z, rot, w: 1.2, d: 1.2, h: 2.1, fy: y, fuel: 0.5 });
+  const walls = [];
   for (const [lx, lz, sx, sz] of [[0, -0.6, 1.2, 0.05], [-0.6, 0, 0.05, 1.2], [0.6, 0, 0.05, 1.2]]) {
-    const [px, pz] = F.p(lx, lz); box(M.planks, px, y + 1.05, pz, sx, 2.1, sz, { rot, tile: 1.5, vertical: true });
+    const [px, pz] = F.p(lx, lz);
+    walls.push(panel('wall', { hp: 0.5, mode: 'rigid', density: 450 }));
+    box(M.planks, px, y + 1.05, pz, sx, 2.1, sz, { rot, tile: 1.5, vertical: true, collide: true, walk: false });
   }
   const [dx, dz] = F.p(0.2, 0.9);
+  panel('door', { hp: 0.3, density: 450 });
   box(M.planks, dx, y + 1.0, dz, 1.0, 2.0, 0.04, { rot: rot + 0.9, tile: 1.5, vertical: true });
+  panel('roof', { hp: 0.4, sup: { list: walls, frac: 0.6 }, density: 900, float: 0 });
   box(M.roofRust, x, y + 2.2, z, 1.5, 0.03, 1.5, { rot, rx: -0.15, tile: 1.2 });
-  addBox(x, y + 1, z, 1.2, 2, 1.2, rot);
+  addBox(x, y + 2.2, z, 1.5, 0.2, 1.5, rot, { walk: true });
+  endStruct();
 }
 /** Навес-пилорама кордона: столбы, односкатная крыша, бревна на козлах. */
 function sawShed(x, z, rot) {
@@ -294,7 +345,8 @@ const T_PLAN = [
 function clusterItems() {
   const out = [];
   for (const it of T_PLAN) {
-    for (const mir of [false, true]) {
+    // вторая половина карты — пионерлагерь (camp.js), турбаза не зеркалится
+    for (const mir of [false]) {
       const s = mir ? -1 : 1;
       const c = mir ? CLUSTERS.K : CLUSTERS.T;
       const x = it.x * s, z = it.z * s;
@@ -305,16 +357,17 @@ function clusterItems() {
       out.push({ ...it, ...(mir && typeof it.alt === 'object' ? it.alt : {}), kind: mir && it.alt === 'saw' ? 'saw' : mir && it.kind === 'bus' ? 'truck' : it.kind, x, z, rot, mir, seed: Math.abs(Math.round(it.x * 13 + it.z * 7)) + (mir ? 999 : 0) });
     }
   }
-  return out;
+  return [...out, ...campHouses(), ...campItems()];
 }
 let ITEMS = [];
 export function planBuildings() {
   ITEMS = clusterItems();
+  planCamp(ITEMS.filter(it => it.kind.startsWith('camp')));
   for (const it of ITEMS) {
     if (it.kind === 'house') it.pad = addPad(it.x, it.z, it.w / 2 + 0.6, it.d / 2 + (it.porch ? 2.4 : 1.2), it.rot, 3);
     else if (it.kind === 'bus' || it.kind === 'truck') keep(it.x, it.z, 4.2);
     else if (it.kind === 'saw') it.pad = addPad(it.x, it.z, 4.2, 2.6, it.rot, 2.5);
-    else keep(it.x, it.z, it.kind === 'woodpile' ? 2 : 1.3);
+    else if (!it.kind.startsWith('camp')) keep(it.x, it.z, it.kind === 'woodpile' ? 2 : 1.3);
     // тропы подходят к дверям — проверяем только сердцевину дома
     if (it.kind === 'house' && pathInfluence(it.x, it.z, Math.min(it.w, it.d) * 0.3) > 0.3)
       console.warn('[layout] дом на тропе:', it.id, it.x, it.z);
@@ -332,21 +385,30 @@ export function buildBuildings() {
     else if (it.kind === 'saw') sawShed(it.x, it.z, it.rot);
     else if (it.kind === 'bus') vehicle('bus', it.x, it.z, it.rot, { seed: 11, paint: 1, tilt: 0.06 });
     else if (it.kind === 'truck') vehicle('truck', it.x, it.z, it.rot, { seed: 12, paint: 3, tilt: 0.04 });
+    else buildCampItem(it);
   }
+  buildCampExtras();
 }
 /** Веранда главного корпуса: настил, столбы, навес — и драный брезент на нём. */
 function porch(o) {
   const F = frame(o.x, o.z, o.rot);
   const fy = o.pad.y + 0.42, dep = 2.0;
   const [cx, cz] = F.p(0, o.d / 2 + dep / 2);
+  beginStruct({ kind: 'porch', x: cx, z: cz, rot: o.rot, w: o.w - 1, d: dep, h: 2.5, fy, fuel: 0.6 });
+  noPanel();
   box(M.planksDark, cx, fy - 0.05, cz, o.w - 1, 0.1, dep, { rot: o.rot, tile: 1.2, collide: true });
+  const posts = [];
   for (const lx of [-o.w / 2 + 0.7, -o.w / 4, o.w / 4, o.w / 2 - 0.7]) {
     const [px, pz] = F.p(lx, o.d / 2 + dep - 0.1);
+    posts.push(panel('prop', { hp: 0.5, density: 450 }));
     cyl(M.planksPaint, px, fy + 1.2, pz, 0.08, 0.08, 2.4, { seg: 6 });
     addCircle2(px, pz, 0.1, fy, fy + 2.4);
   }
   const [rx, rz] = F.p(0, o.d / 2 + dep / 2);
+  panel('roof', { hp: 0.6, sup: { list: posts, frac: 0.5 }, density: 900, float: 0 });
   box(M.roofTar, rx, fy + 2.5, rz, o.w - 0.6, 0.04, dep + 0.5, { rot: o.rot, rx: 0.18, tile: 1.2 });
+  addBox(rx, fy + 2.5, rz, o.w - 0.6, 0.2, dep + 0.5, o.rot, { walk: true });
+  endStruct();
   // брезент, сорванный с одного края
   const ux = Math.cos(o.rot), uz = -Math.sin(o.rot), fx = Math.sin(o.rot), fz = Math.cos(o.rot);
   const [ax, az] = F.p(-o.w / 2 + 0.8, o.d / 2 + dep + 0.1);
@@ -360,9 +422,10 @@ function sign(o) {
   const F = frame(o.x, o.z, o.rot);
   const [x, z] = F.p(-2.4, o.d / 2 + 3.2);
   const y = terrainH(x, z);
-  for (const s of [-1, 1]) cyl(M.deadwood, x + Math.cos(o.rot) * s * 1.1, y + 1.2, z - Math.sin(o.rot) * s * 1.1, 0.07, 0.07, 2.4, { seg: 6 });
-  const m = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 1.2), new THREE.MeshStandardMaterial({ map: o.mir ? TEX.boardK : TEX.board, roughness: 0.85, side: THREE.DoubleSide }));
-  m.position.set(x, y + 1.9, z); m.rotation.set(0, o.rot, 0.04);
-  m.castShadow = true; m.receiveShadow = true;
-  scene.add(m);
+  beginStruct({ kind: 'sign', x, z, rot: o.rot, w: 2.4, d: 0.3, h: 2.5, fy: y, fuel: 0.3 });
+  panel('prop', { hp: 0.5, density: 400 });
+  for (const s2 of [-1, 1]) cyl(M.deadwood, x + Math.cos(o.rot) * s2 * 1.1, y + 1.2, z - Math.sin(o.rot) * s2 * 1.1, 0.07, 0.07, 2.4, { seg: 6 });
+  M.boardT ??= new THREE.MeshStandardMaterial({ map: TEX.board, roughness: 0.85, side: THREE.DoubleSide });
+  place(M.boardT, new THREE.PlaneGeometry(2.4, 1.2), x, y + 1.9, z, [0, o.rot, 0.04]);
+  endStruct();
 }

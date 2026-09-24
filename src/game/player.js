@@ -3,10 +3,12 @@ import { camera, FRAME } from '../core/env.js';
 import { clamp, lerp, smoothstep } from '../core/math.js';
 import { MAP, SPAWNS, terrainH, edgeDist, inMinefield, lakeRho, ISLAND, CLUSTERS, lakeContour } from '../world/layout.js';
 import { hFast } from '../world/heightcache.js';
-import { pushOut, supportTop, ceilingAt } from '../core/colliders.js';
+import { pushOut, pushOut3D, supportTop, ceilingAt } from '../core/colliders.js';
+import { crownAt } from '../world/forest.js';
+import { breakPaneRef } from '../fx/glass.js';
 import { mineNear } from '../world/military.js';
 import { explode, BLAST } from '../fx/explosions.js';
-import { click } from '../fx/audio.js';
+import { click, bump, splashSound } from '../fx/audio.js';
 import { windUniforms } from '../world/wind.js';
 import { addRipple } from '../world/lake.js';
 import { FX } from '../fx/particles.js';
@@ -28,7 +30,7 @@ export const PL = {
   pos: new THREE.Vector3(), vel: new THREE.Vector3(), yaw: 0, pitch: -0.2, roll: 0,
   speed: 12, onGround: false, crouch: 0, eye: 1.68, bob: 0, bobAmp: 0, step: 0,
   dead: 0, deathMsg: '', light: false, swim: false, agl: 0, jumpLock: false,
-  cine: null, lastDrop: -9, burn: 0
+  cine: null, lastDrop: -9, burn: 0, under: false, air: 1, wadePrev: false
 };
 export const keys = {};
 const SENS = 0.0021;
@@ -40,7 +42,7 @@ export function spawnAt(team, mode = PL.mode) {
   PL.yaw = s.yaw; PL.pitch = mode === 'drone' ? -0.22 : -0.03;
   if (mode === 'drone') PL.pos.set(s.x - s.fx * 10, terrainH(s.x, s.z) + 16, s.z - s.fz * 10);
   else PL.pos.set(s.x + s.fx * 2, terrainH(s.x, s.z) + 0.05, s.z + s.fz * 2);
-  PL.dead = 0;
+  PL.dead = 0; PL.air = 1; PL.under = false;
 }
 export function setMode(mode) {
   if (mode === PL.mode) return;
@@ -183,25 +185,55 @@ export function updatePlayer(dt) {
   updateBombs(dt);
   applyCamera(dt);
 }
+const _hit = { hit: false, c: null, depth: 0, n: new THREE.Vector3() };
+let bumpT = 0;
 function updateDrone(dt, ix, iz, boost) {
   lookV.set(-Math.sin(PL.yaw) * Math.cos(PL.pitch), Math.sin(PL.pitch), -Math.cos(PL.yaw) * Math.cos(PL.pitch));
-  const sp = PL.speed * boost;
+  const inLake = lakeRho(PL.pos.x, PL.pos.z) < 1;
+  PL.under = inLake && PL.pos.y < MAP.WATER_Y - 0.05;
+  // под водой винты тянут слабо, корпус сносит вверх
+  const sp = PL.speed * boost * (PL.under ? 0.3 : 1);
   tmp.set(0, 0, 0).addScaledVector(lookV, iz * sp).addScaledVector(right, ix * sp);
   if (keys.Space || keys.KeyE) tmp.y += sp * 0.8;
   if (keys.KeyC || keys.KeyQ || keys.ControlLeft) tmp.y -= sp * 0.8;
-  // инерция: разгон мягче торможения
-  const k = tmp.lengthSq() > PL.vel.lengthSq() ? 2.6 : 3.8;
+  if (PL.under && tmp.y === 0) tmp.y = 0.35;
+  // инерция: разгон мягче торможения, в воде — вязко
+  const k = (tmp.lengthSq() > PL.vel.lengthSq() ? 2.6 : 3.8) * (PL.under ? 0.6 : 1);
   PL.vel.lerp(tmp, Math.min(1, dt * k));
+  // сквозь хвою — с сопротивлением: крона тормозит и осыпается
+  const crown = crownAt(PL.pos.x, PL.pos.y, PL.pos.z);
+  if (crown) {
+    PL.vel.multiplyScalar(Math.exp(-dt * 2.2));
+    if (Math.random() < dt * 20 * Math.min(1, PL.vel.length() / 5)) FX.alpha.spawn({ x: PL.pos.x + sr(-0.5, 0.5), y: PL.pos.y + sr(-0.3, 0.5), z: PL.pos.z + sr(-0.5, 0.5), vx: sr(-0.5, 0.5), vy: sr(-0.5, 0.3), vz: sr(-0.5, 0.5), size: sr(0.05, 0.12), life: 2.5, col: [0.2, 0.22, 0.1], a: 0.9, grav: 1.5, drag: 1.5 });
+  }
+  const wasUnder = PL.under;
   PL.pos.addScaledVector(PL.vel, dt);
-  // земля, вода и граница мира
-  const g = Math.max(hFast(PL.pos.x, PL.pos.z), lakeRho(PL.pos.x, PL.pos.z) < 1 ? MAP.WATER_Y : -1e9);
+  // стволы, стены, кровли, блиндажи, машины: дрон упирается и скользит
+  if (pushOut3D(PL.pos, 0.32, _hit)) {
+    const vn = PL.vel.dot(_hit.n);
+    if (vn < 0) {
+      const impact = -vn;
+      PL.vel.addScaledVector(_hit.n, -vn * 1.25);
+      PL.vel.multiplyScalar(0.8);
+      if (impact > 4 && bumpT <= 0) { BLAST.shake = Math.max(BLAST.shake, Math.min(0.7, impact * 0.05)); bump(impact); bumpT = 0.25; }
+      // на скорости дрон бьёт стекло
+      if (_hit.c?.pane && impact > 3) breakPaneRef(_hit.c.pane, PL.vel.clone().normalize().negate(), impact * 0.3);
+    }
+  }
+  bumpT -= dt;
+  // земля и дно озера
+  const g = hFast(PL.pos.x, PL.pos.z);
   if (PL.pos.y < g + 0.4) { PL.pos.y = g + 0.4; if (PL.vel.y < 0) PL.vel.y = 0; }
   PL.pos.y = Math.min(PL.pos.y, 160);
   const lim = MAP.FENCE + 40, e = edgeDist(PL.pos.x, PL.pos.z);
   if (e > lim) { PL.pos.x = clamp(PL.pos.x, -lim, lim); PL.pos.z = clamp(PL.pos.z, -lim, lim); }
-  PL.agl = PL.pos.y - g;
+  const surf = inLake ? MAP.WATER_Y : g;
+  PL.agl = PL.pos.y - Math.max(g, surf);
+  const nowUnder = inLake && PL.pos.y < MAP.WATER_Y - 0.05;
+  if (nowUnder !== wasUnder) splashAt(PL.pos.x, PL.pos.z, Math.min(1.5, Math.abs(PL.vel.y) * 0.25 + 0.4));
+  if (nowUnder && Math.random() < dt * 8) FX.alpha.spawn({ x: PL.pos.x + sr(-0.2, 0.2), y: PL.pos.y - 0.2, z: PL.pos.z + sr(-0.2, 0.2), vx: 0, vy: sr(0.6, 1.2), vz: 0, size: 0.04, grow: 0.02, life: Math.min(2, (MAP.WATER_Y - PL.pos.y) / 0.9), col: [0.8, 0.9, 0.95], a: 0.6 });
   // низко над водой — рябь от потока винтов
-  if (lakeRho(PL.pos.x, PL.pos.z) < 0.98 && PL.agl < 3 && Math.random() < dt * 4) {
+  if (inLake && !nowUnder && PL.agl < 3 && Math.random() < dt * 4) {
     addRipple(PL.pos.x, PL.pos.z, 0.35 * (1 - PL.agl / 3));
     FX.alpha.spawn({ x: PL.pos.x + sr(-1, 1), y: MAP.WATER_Y + 0.1, z: PL.pos.z + sr(-1, 1), vx: sr(-2, 2), vy: sr(0.3, 1), vz: sr(-2, 2), size: 0.5, grow: 1.4, life: 1.2, col: [0.75, 0.78, 0.8], a: 0.25 });
   }
@@ -209,6 +241,12 @@ function updateDrone(dt, ix, iz, boost) {
   const lat = PL.vel.dot(right) / Math.max(PL.speed, 1);
   PL.roll = lerp(PL.roll, -clamp(lat, -1, 1) * 0.16, Math.min(1, dt * 3));
   windUniforms.uPlayer.value.set(0, -999, 0);
+}
+/** Всплеск и кольца на воде. */
+export function splashAt(x, z, k = 1) {
+  addRipple(x, z, 0.5 * k);
+  for (let i = 0; i < 14 * k; i++) FX.alpha.spawn({ x: x + sr(-0.3, 0.3), y: MAP.WATER_Y + 0.05, z: z + sr(-0.3, 0.3), vx: sr(-1.2, 1.2) * k, vy: sr(1.5, 4) * k, vz: sr(-1.2, 1.2) * k, size: sr(0.08, 0.2), grow: 0.3, life: sr(0.5, 1), col: [0.72, 0.78, 0.8], a: 0.6, grav: 9.8, floor: MAP.WATER_Y });
+  splashSound(k);
 }
 function updateWalk(dt, ix, iz, boost) {
   const water = lakeRho(PL.pos.x, PL.pos.z) < 1.0 ? MAP.WATER_Y : -1e9;
@@ -232,13 +270,28 @@ function updateWalk(dt, ix, iz, boost) {
   }
   const bodyH = lerp(1.75, 1.1, PL.crouch);
   pushOut(PL.pos, 0.32, PL.pos.y + 0.42, PL.pos.y + bodyH);
+  // вброд: брызги и круги от ног, всплеск при входе в воду
+  const wading = depth > 0.08 && !PL.swim;
+  if (wading && !PL.wadePrev) splashAt(PL.pos.x, PL.pos.z, clamp(Math.hypot(PL.vel.x, PL.vel.z) * 0.2 + Math.abs(PL.vel.y) * 0.2, 0.3, 1.2));
+  if (wading && Math.random() < dt * 5 * clamp(Math.hypot(PL.vel.x, PL.vel.z) / 3, 0, 1)) {
+    addRipple(PL.pos.x, PL.pos.z, 0.18);
+    for (let i = 0; i < 3; i++) FX.alpha.spawn({ x: PL.pos.x + sr(-0.3, 0.3), y: water + 0.03, z: PL.pos.z + sr(-0.3, 0.3), vx: sr(-0.8, 0.8), vy: sr(0.8, 2), vz: sr(-0.8, 0.8), size: 0.07, grow: 0.2, life: 0.5, col: [0.7, 0.75, 0.78], a: 0.5, grav: 9.8, floor: water });
+  }
+  PL.wadePrev = wading;
   // граница: колючая проволока
   const lim = MAP.FENCE - 0.8;
   PL.pos.x = clamp(PL.pos.x, -lim, lim); PL.pos.z = clamp(PL.pos.z, -lim, lim);
   // вертикаль
   if (PL.swim) {
-    PL.pos.y = lerp(PL.pos.y, water - 1.35 + Math.sin(FRAME.t * 1.6) * 0.04, Math.min(1, dt * 4));
+    // плавание: C — нырнуть, Space — всплыть; без ввода тело выталкивает к поверхности
+    const floor = terrainH(PL.pos.x, PL.pos.z), surface = water - 1.35 + Math.sin(FRAME.t * 1.6) * 0.04;
+    let vy = keys.KeyC || keys.ControlLeft ? -1.6 : keys.Space ? 1.4 : (surface - PL.pos.y) * 2.2;
+    PL.pos.y = clamp(PL.pos.y + vy * dt, floor + 0.1, surface);
     PL.vel.y = 0; PL.onGround = false;
+    if (Math.random() < dt * 3 * clamp(Math.hypot(PL.vel.x, PL.vel.z), 0, 1.5) && PL.pos.y > surface - 0.3) {
+      addRipple(PL.pos.x, PL.pos.z, 0.25);
+      FX.alpha.spawn({ x: PL.pos.x + sr(-0.4, 0.4), y: water + 0.05, z: PL.pos.z + sr(-0.4, 0.4), vx: sr(-0.6, 0.6), vy: sr(0.6, 1.5), vz: sr(-0.6, 0.6), size: 0.1, grow: 0.3, life: 0.6, col: [0.75, 0.8, 0.82], a: 0.5, grav: 9.8 });
+    }
   } else {
     PL.vel.y -= 19.6 * dt;
     if (keys.Space && PL.onGround && !PL.jumpLock && PL.crouch < 0.4) { PL.vel.y = 5.4; PL.onGround = false; PL.jumpLock = true; }
@@ -257,6 +310,11 @@ function updateWalk(dt, ix, iz, boost) {
   PL.bob = Math.sin(PL.step * Math.PI) * 0.03 * PL.bobAmp;
   PL.roll = lerp(PL.roll, 0, Math.min(1, dt * 6));
   PL.agl = 1.7;
+  // дыхание: под водой 25 с воздуха, потом захлёбывается
+  const eyeY = PL.pos.y + (PL.swim ? 1.5 : lerp(PL.eye, 1.02, PL.crouch));
+  PL.under = water > -1e8 && eyeY < water - 0.02;
+  if (PL.under) { PL.air -= dt / 25; if (PL.air <= 0) { PL.air = 1; die('ЗАХЛЕБНУЛСЯ', 'water'); } }
+  else PL.air = Math.min(1, PL.air + dt / 3);
   windUniforms.uPlayer.value.copy(PL.pos);
 }
 function updateCine(dt) {

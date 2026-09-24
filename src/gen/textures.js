@@ -713,3 +713,43 @@ export function wattle() {
   grain(x, S, S, 0.08);
   return { map: tex(c), normal: tex(heightToNormal(h, 2.2), 1, 1, false) };
 }
+/** Вывеска лагеря: облупленная эмаль, ржавые потёки, выцветшие буквы. */
+export function campSign(lines, o = {}) {
+  const w = o.w ?? 1024, h = o.h ?? 256, [c, x] = cv(w, h);
+  const bg = o.bg ?? '#b9302a', fg = o.fg ?? '#ece3c8';
+  x.fillStyle = bg; x.fillRect(0, 0, w, h);
+  // полосы старой краски
+  for (let i = 0; i < 40; i++) { x.fillStyle = `rgba(${o.dark ? '20,20,18' : '255,240,210'},${sr(0.02, 0.07)})`; x.fillRect(0, srnd() * h, w, sr(2, 12)); }
+  x.strokeStyle = fg; x.lineWidth = 8; x.strokeRect(18, 18, w - 36, h - 36);
+  x.fillStyle = fg; x.textAlign = 'center'; x.textBaseline = 'middle';
+  const n = lines.length;
+  lines.forEach((ln, i) => {
+    const sz = (o.sizes?.[i]) ?? (i === 0 ? h * 0.36 / Math.max(1, n * 0.7) : h * 0.2);
+    x.font = `bold ${sz}px "Arial Narrow", Arial, sans-serif`;
+    x.fillText(ln, w / 2, h / 2 + (i - (n - 1) / 2) * (h * 0.78 / n));
+  });
+  // облупилось до металла и ржавчины, потёки вниз
+  for (let i = 0; i < 90; i++) blob(x, srnd() * w, srnd() * h, sr(4, 30), [110, 70, 40], sr(0.25, 0.8));
+  for (let i = 0; i < 26; i++) {
+    const px = srnd() * w, py = srnd() * h * 0.6, g = x.createLinearGradient(0, py, 0, py + sr(40, 160));
+    g.addColorStop(0, 'rgba(90,50,24,.6)'); g.addColorStop(1, 'rgba(90,50,24,0)');
+    x.fillStyle = g; x.fillRect(px, py, sr(3, 9), 160);
+  }
+  for (let i = 0; i < 40; i++) blob(x, srnd() * w, srnd() * h, sr(3, 14), [40, 36, 30], sr(0.3, 0.9));
+  grain(x, w, h, 0.1);
+  const t = tex(c); t.wrapS = t.wrapT = 1001; return t;
+}
+/** Голова волчонка для арки: простой силуэт, как на значках. */
+export function wolfBadge() {
+  const [c, x] = cv(256);
+  x.fillStyle = '#d8cfb2'; x.beginPath(); x.arc(128, 128, 120, 0, 7); x.fill();
+  x.fillStyle = '#9b2a22'; x.beginPath(); x.arc(128, 128, 104, 0, 7); x.fill();
+  x.fillStyle = '#3a3530';
+  x.beginPath(); x.moveTo(70, 70); x.lineTo(96, 118); x.lineTo(60, 128); x.closePath(); x.fill();
+  x.beginPath(); x.moveTo(186, 70); x.lineTo(160, 118); x.lineTo(196, 128); x.closePath(); x.fill();
+  x.beginPath(); x.moveTo(64, 120); x.quadraticCurveTo(128, 90, 192, 120); x.lineTo(150, 196); x.lineTo(128, 214); x.lineTo(106, 196); x.closePath(); x.fill();
+  x.fillStyle = '#d8cfb2'; x.beginPath(); x.arc(106, 140, 7, 0, 7); x.arc(150, 140, 7, 0, 7); x.fill();
+  for (let i = 0; i < 50; i++) blob(x, srnd() * 256, srnd() * 256, sr(3, 16), [100, 70, 44], sr(0.2, 0.7));
+  grain(x, 256, 256, 0.1);
+  return tex(c);
+}

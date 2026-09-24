@@ -1,6 +1,10 @@
 import * as THREE from 'three';
 import { COLLIDERS } from './colliders.js';
-import { Q } from './env.js';
+import { Q, FRAME, PERF } from './env.js';
+import { MAP, lakeRho } from '../world/layout.js';
+import { WIND } from '../world/wind.js';
+
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
 
 /* ============================================================================
    ФИЗИКА (ammo.js — Bullet, собранный в WebAssembly)
@@ -99,7 +103,7 @@ export function syncHeights(H, i0, j0, i1, j1) {
 }
 
 /* ---------- Динамические тела ---------- */
-const MAX = () => Math.round(90 + 110 * Q.tex);
+const MAX = () => Math.round((90 + 110 * Q.tex) * (1 - PERF.load * 0.5));
 /**
  * o: { shape: 'box'|'sphere'|'cyl'|'capsule'|btShape, size:[..], mass, pos, quat, vel, ang,
  *      mesh | sync(pos, quat, k), life, friction, restitution, damp:[lin,ang], keep, onDone, ccd }
@@ -151,7 +155,8 @@ export function addBody(o) {
   PHYS.world.addRigidBody(body, 1, -1);
   const b = {
     body, shape, ms, mesh: o.mesh || null, sync: o.sync || null, life: o.life ?? 8, age: 0, keep: !!o.keep, onDone: o.onDone || null,
-    pos: new THREE.Vector3().copy(o.pos), quat: new THREE.Quaternion().copy(o.quat || _q.identity()), fade: 1, data: o.data || null, mass: o.mass
+    pos: new THREE.Vector3().copy(o.pos), quat: new THREE.Quaternion().copy(o.quat || _q.identity()), fade: 1, data: o.data || null, mass: o.mass,
+    float: o.float ?? 0, rad: o.rad ?? Math.max(0.05, (o.size?.[1] ?? 0.2) / 2), wet: false
   };
   PHYS.bodies.push(b);
   return b;
@@ -245,8 +250,40 @@ export function rayCast(a, b, skipPlayer = true) {
 }
 
 /* ---------- Шаг ---------- */
+/* ---------- Вода: плавучесть, вязкость, всплески ----------
+   float — во сколько раз выталкивающая сила при полном погружении больше веса:
+   доски и ветки (1.6–1.8) плавают, притопленные наполовину, бочки (2.5) — высоко,
+   жесть, стекло и комья (0) тонут, но медленно — в воде вязко. */
+let onSplash = null;
+export const setSplashHandler = fn => { onSplash = fn; };
+function buoyancy(dt) {
+  const W = MAP.WATER_Y;
+  for (const b of PHYS.bodies) {
+    if (!b.body || b.frozen) continue;
+    const p = b.pos;
+    if (p.y > W + b.rad + 0.05 || lakeRho(p.x, p.z) > 1) { b.wet = false; continue; }
+    const sub = clamp((W - (p.y - b.rad)) / (2 * b.rad), 0, 1);
+    const v = b.body.getLinearVelocity();
+    if (!b.wet) { b.wet = true; if (v.y() < -1.5 && onSplash) onSplash(p.x, p.z, Math.min(1.5, -v.y() * 0.12 * Math.cbrt(b.mass))); }
+    if (sub <= 0) continue;
+    b.body.activate();
+    // выталкивание, покачивание на волне, снос ветром по поверхности — сразу в скорость, с вязкостью воды
+    const fl = b.float > 0 ? 1 : 0;
+    const dvy = 9.81 * b.float * sub * dt + Math.sin(FRAME.t * 1.7 + p.x) * 0.3 * dt * fl * sub;
+    const k = Math.exp(-dt * 2.5 * sub), ky = Math.exp(-dt * 4 * sub);
+    V0.setValue(v.x() * k + WIND.dir.x * WIND.strength * 0.15 * dt * fl, (v.y() + dvy) * ky, v.z() * k + WIND.dir.y * WIND.strength * 0.15 * dt * fl);
+    b.body.setLinearVelocity(V0);
+    const w = b.body.getAngularVelocity(), ka = Math.exp(-dt * 2 * sub);
+    V0.setValue(w.x() * ka, w.y() * ka, w.z() * ka);
+    b.body.setAngularVelocity(V0);
+  }
+}
+let camRef = null;
+export const setPhysCamera = c => { camRef = c; };
+const FAR = b => camRef && (b.pos.x - camRef.position.x) ** 2 + (b.pos.z - camRef.position.z) ** 2 > 90 * 90;
 export function stepPhysics(dt) {
   if (!PHYS.ready) return;
+  buoyancy(dt);
   PHYS.world.stepSimulation(dt, 3, 1 / 60);
   PHYS.steps++;
   const L = PHYS.bodies;
@@ -258,8 +295,10 @@ export function stepPhysics(dt) {
     const o = T0.getOrigin(), r = T0.getRotation();
     b.pos.set(o.x(), o.y(), o.z()); b.quat.set(r.x(), r.y(), r.z(), r.w());
     // провалился сквозь мир (редко, на стыках карты высот) — убираем
-    if (b.pos.y < -60) { killBody(b); continue; }
-    if (!b.keep && b.age > b.life) {
+    // провалился сквозь карту высот (стык, большая скорость) — убираем
+    if (b.pos.y < MAP.WATER_Y - 12 || b.pos.y < -60) { killBody(b); continue; }
+    // далеко от камеры обломки живут вдвое меньше — меньше тел в симуляции
+    if (!b.keep && b.age > b.life * (FAR(b) ? 0.5 : 1)) {
       b.fade = Math.max(0, 1 - (b.age - b.life) / 1.2);
       if (b.fade <= 0) { killBody(b); continue; }
     }
