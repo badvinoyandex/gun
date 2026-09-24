@@ -45,17 +45,21 @@ export function makeCloth({ nx, ny, place, pinFn, material, drag = 0.985, wind =
   return c;
 }
 
-const _bl = new THREE.Vector4();
+const _bl = new THREE.Vector4(), _fr = new THREE.Frustum(), _pm = new THREE.Matrix4(), _sp = new THREE.Sphere();
 export function stepCloth(dt, t) {
   if (!(dt > 1e-4)) return;
   const h = Math.min(dt, 1 / 40);
   const wx0 = WIND.dir.x * WIND.strength * 9, wz0 = WIND.dir.y * WIND.strength * 9;
   _bl.copy(windUniforms.uBlast.value);
   const blastStr = windUniforms.uBlastStr.value;
+  _pm.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse); _fr.setFromProjectionMatrix(_pm);
+  const far2 = Q.clothR * Q.clothR;
   for (const c of CLOTHS) {
     const d2 = c.center.distanceToSquared(camera.position);
-    // дальние полотна считаются реже: с 150 м рябь не видна
-    const every = d2 > 22500 ? 4 : d2 > 3600 ? 2 : 1;
+    // дальше Q.clothR полотно замирает (рябь не видна), вне кадра считается изредка — чтобы не «прыгнуло» при повороте
+    if (d2 > far2 && c.frame > 0) { c.frame++; continue; }
+    const vis = _fr.intersectsSphere(_sp.set(c.center, 7));
+    const every = !vis ? 8 : d2 > 22500 ? 4 : d2 > 3600 ? 2 : 1;
     if ((c.frame++ % every) !== 0) continue;
     const step = h * every, s2 = step * step;
     const { P, O, pin, N } = c;

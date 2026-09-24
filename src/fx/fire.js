@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { scene, camera, FRAME, Q } from '../core/env.js';
 import { clamp, lerp, sr, srnd, TAU } from '../core/math.js';
-import { lakeRho, pathInfluence, trenchDist, edgeDist, MAP, PADS, padRectDist } from '../world/layout.js';
+import { lakeRho, pathInfluence, trenchDist, edgeDist, MAP, PADS, padRectDist, inBog, streamAt, STREAM_BW } from '../world/layout.js';
 import { hFast, grassDensity } from '../world/heightcache.js';
 import { forestDensity } from '../world/forest.js';
 import { BURN, burnData, markBurnDirty } from '../core/fxu.js';
@@ -24,21 +24,21 @@ const N = BURN.N;
 const fuel = new Float32Array(N * N), fuel0 = new Float32Array(N * N), heat = new Float32Array(N * N);
 const state = new Uint8Array(N * N);          // 0 — цело, 1 — горит, 2 — выгорело
 let active = [];
-export const FIRE = { cells: 0, trees: [], brands: [], lights: [], near: 0 };
+export const FIRE = { cells: 0, trees: [], brands: [], lights: [], near: 0, structs: [] };
 const MAXC = () => Math.round(500 + 900 * Q.tex);
 
 export function buildFire() {
   for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
     const x = BURN.X0 + i + 0.5, z = BURN.X0 + j + 0.5, k = j * N + i;
     let f = 0;
-    if (lakeRho(x, z) > 1.04 && pathInfluence(x, z, 0.3) < 0.4 && trenchDist(x, z) > 1.1 && !PADS.some(p => padRectDist(p, x, z) < 0.5)) {
+    if (lakeRho(x, z) > 1.04 && pathInfluence(x, z, 0.3) < 0.4 && trenchDist(x, z) > 1.1 && inBog(x, z) < 0.4 && streamAt(x, z).d > STREAM_BW + 0.6 && !PADS.some(p => padRectDist(p, x, z) < 0.5)) {
       f = clamp(grassDensity(x, z) * 0.85 + forestDensity(x, z) * 0.35, 0, 1.2);
       const e = edgeDist(x, z);
       if (e > MAP.PLAY - 2 && e < MAP.FENCE) f *= 1.25;                  // сухостой минной полосы
     }
     fuel[k] = fuel0[k] = f;
   }
-  const n = Math.max(2, Math.round(2 + Q.lights * 0.4));
+  const n = Q.fireLights;
   for (let i = 0; i < n; i++) {
     const L = new THREE.PointLight(0xff7a2a, 0, 16, 1.7);
     L.position.set(0, -500, 0);
@@ -100,6 +100,7 @@ export function attachFire(b, life = 7) { FIRE.brands.push({ b, age: 0, life });
 let acc = 0;
 const NB = [[1, 0, 1], [-1, 0, 1], [0, 1, 1], [0, -1, 1], [1, 1, 0.7], [-1, 1, 0.7], [1, -1, 0.7], [-1, -1, 0.7]];
 function tick(st) {
+  if (!active.length) { FIRE.cells = 0; return; }
   const wet = WEATHER.wet, rain = WEATHER.rain, wx = WIND.dir.x, wz = WIND.dir.y, ws = WIND.strength;
   const next = [];
   for (const k of active) {
@@ -157,7 +158,7 @@ export function updateFire(dt) {
     const k = near[(Math.random() * near.length) | 0], h = heat[k];
     if (Math.random() > h * dt * 60 * 0.5) continue;
     const x = BURN.X0 + (k % N) + Math.random(), z = BURN.X0 + ((k / N) | 0) + Math.random(), y = hFast(x, z);
-    FX.add.spawn({ x, y: y + 0.1, z, vx: WIND.dir.x * 0.5 + sr(-0.2, 0.2), vy: sr(0.8, 2.0), vz: WIND.dir.y * 0.5 + sr(-0.2, 0.2), size: sr(0.35, 0.8) * (0.6 + h), grow: -0.3, life: sr(0.35, 0.8), col: [1.7, 0.85, 0.35], a: 0.9, cool: 0.45, windK: 0.6 });
+    FX.add.spawn({ flame: true, x, y: y + 0.1, z, vx: WIND.dir.x * 0.5 + sr(-0.2, 0.2), vy: sr(0.8, 2.0), vz: WIND.dir.y * 0.5 + sr(-0.2, 0.2), size: sr(0.35, 0.8) * (0.6 + h), grow: -0.3, life: sr(0.35, 0.8), col: [1.7, 0.85, 0.35], a: 0.9, cool: 0.45, windK: 0.6 });
     if (Math.random() < 0.18) FX.alpha.spawn({ x, y: y + 0.8, z, vx: 0, vy: sr(0.8, 1.6), vz: 0, size: sr(0.6, 1.2), grow: 0.9, life: sr(3, 6), col: [0.2, 0.19, 0.18], a: 0.3, fadeIn: 0.4, windK: 1.6, drag: 0.3 });
     if (Math.random() < 0.05) FX.add.spawn({ x, y: y + 0.4, z, vx: sr(-0.5, 0.5), vy: sr(1.5, 3.5), vz: sr(-0.5, 0.5), size: 0.05, life: sr(1, 2), col: [2.6, 1.2, 0.4], a: 1, grav: 1.2, windK: 0.8, drag: 0.4 });
   }
@@ -171,7 +172,7 @@ export function updateFire(dt) {
     for (let n = 0; n < 3; n++) {
       if (Math.random() > k) continue;
       const a = srnd() * TAU, r = Math.sqrt(srnd()) * f.r, y = lerp(f.y0, f.y1, srnd());
-      FX.add.spawn({ x: f.x + Math.cos(a) * r, y, z: f.z + Math.sin(a) * r, vx: WIND.dir.x, vy: sr(1.5, 3), vz: WIND.dir.y, size: sr(0.6, 1.4), grow: -0.2, life: sr(0.4, 0.9), col: [1.8, 0.8, 0.3], a: 0.9, cool: 0.4, windK: 0.8 });
+      FX.add.spawn({ flame: true, x: f.x + Math.cos(a) * r, y, z: f.z + Math.sin(a) * r, vx: WIND.dir.x, vy: sr(1.5, 3), vz: WIND.dir.y, size: sr(0.6, 1.4), grow: -0.2, life: sr(0.4, 0.9), col: [1.8, 0.8, 0.3], a: 0.9, cool: 0.4, windK: 0.8 });
     }
     if (Math.random() < k * 0.35) FX.alpha.spawn({ x: f.x, y: f.y1, z: f.z, vx: 0, vy: sr(1, 2), vz: 0, size: sr(1.4, 2.4), grow: 1.4, life: sr(4, 8), col: [0.16, 0.15, 0.14], a: 0.4, fadeIn: 0.5, windK: 2, drag: 0.3 });
     // с горящей кроны падают угли
@@ -183,10 +184,12 @@ export function updateFire(dt) {
     g.age += dt;
     const b = g.b;
     if (!b.body || g.age > g.life || WEATHER.rain > 0.7 && g.age > 2) { FIRE.brands.splice(i, 1); continue; }
-    if (Math.random() < 0.7) FX.add.spawn({ x: b.pos.x + sr(-0.2, 0.2), y: b.pos.y + 0.1, z: b.pos.z + sr(-0.2, 0.2), vx: 0, vy: sr(0.5, 1.2), vz: 0, size: sr(0.2, 0.45), grow: -0.3, life: sr(0.3, 0.6), col: [1.8, 0.9, 0.35], a: 0.9, cool: 0.4, windK: 0.4 });
+    if (Math.random() < 0.7) FX.add.spawn({ flame: true, x: b.pos.x + sr(-0.2, 0.2), y: b.pos.y + 0.1, z: b.pos.z + sr(-0.2, 0.2), vx: 0, vy: sr(0.5, 1.2), vz: 0, size: sr(0.2, 0.45), grow: -0.3, life: sr(0.3, 0.6), col: [1.8, 0.9, 0.35], a: 0.9, cool: 0.4, windK: 0.4 });
     if (Math.random() < 0.12) FX.alpha.spawn({ x: b.pos.x, y: b.pos.y + 0.4, z: b.pos.z, vx: 0, vy: 0.8, vz: 0, size: 0.4, grow: 0.7, life: 3, col: [0.22, 0.21, 0.2], a: 0.25, windK: 1.2 });
     // лежит на земле — поджигает траву под собой
     if (g.age > 0.6 && b.pos.y - hFast(b.pos.x, b.pos.z) < 0.4 && Math.random() < dt * 2.5) ignite(b.pos.x, b.pos.z, 0, 1);
+    if (g.age > 0.6 && Math.random() < dt * 0.4 && FIRE.onBrand) FIRE.onBrand(b.pos);
+    if (b.wet) { FIRE.brands.splice(i, 1); continue; }
   }
   // свет: несколько точечных источников на самых близких очагах, с мерцанием
   lightT -= dt;
@@ -196,6 +199,7 @@ export function updateFire(dt) {
     for (const k of near) cand.push([BURN.X0 + (k % N) + 0.5, BURN.X0 + ((k / N) | 0) + 0.5, heat[k]]);
     for (const f of FIRE.trees) cand.push([f.x, f.z, 3, (f.y0 + f.y1) / 2]);
     for (const g of FIRE.brands) if (g.b.body) cand.push([g.b.pos.x, g.b.pos.z, 0.6, g.b.pos.y + 0.3]);
+    for (const f of FIRE.structs) cand.push([f.x, f.z, f.p, f.y]);
     cand.sort((a, b) => ((a[0] - cp.x) ** 2 + (a[1] - cp.z) ** 2) - ((b[0] - cp.x) ** 2 + (b[1] - cp.z) ** 2));
     const picked = [];
     for (const c of cand) {

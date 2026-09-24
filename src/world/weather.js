@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { scene, camera, Q, FRAME, NO_REFLECT } from '../core/env.js';
 import { clamp, lerp, smoothstep, sr, srnd, TAU } from '../core/math.js';
 import { hFast, heightGrid } from './heightcache.js';
+import { MAP } from './layout.js';
 import { WIND } from './wind.js';
 import { FXU } from '../core/fxu.js';
 
@@ -68,7 +69,7 @@ const RAIN_VS = /* glsl */`
     vec3 vel = vec3(uW.x * 2.2, -speed, uW.y * 2.2);
     vec3 p = aR.xyz * box + vel * uT;
     vec3 w = uC + mod(p - uC + box * 0.5, box) - box * 0.5;
-    float ground = texture2D(uH, (w.xz - uHB.xy) * uHB.z).r;
+    float ground = max(texture2D(uH, (w.xz - uHB.xy) * uHB.z).r, WATER_Y);
     // капля видна, если её «номер» укладывается в текущую силу дождя и она выше земли
     float on = step(aR.w, uI) * step(ground, w.y);
     vec3 axis = normalize(vel);
@@ -106,7 +107,7 @@ const SPLASH_VS = /* glsl */`
     vK = k;
     vec2 off = (vec2(h1(id * 1.7 + aR.x * 91.0), h1(id * 2.3 + aR.y * 57.0)) - 0.5) * 28.0;
     vec2 xz = uC.xz + off;
-    float y = texture2D(uH, (xz - uHB.xy) * uHB.z).r + 0.03;
+    float y = max(texture2D(uH, (xz - uHB.xy) * uHB.z).r, WATER_Y) + 0.03;
     float on = step(aR.w, uI) * step(k, 0.35);
     vec3 toCam = normalize(cameraPosition - vec3(xz.x, y, xz.y));
     vec3 side = normalize(cross(vec3(0.0, 1.0, 0.0), toCam));
@@ -144,13 +145,13 @@ export function buildWeather() {
   const common = { uT: { value: 0 }, uI: { value: 0 }, uC: { value: new THREE.Vector3() }, uW: { value: new THREE.Vector2() }, uH: { value: null }, uHB: { value: H.box }, uL: { value: new THREE.Color(0.5, 0.52, 0.55) }, uFlashR: { value: 0 } };
   const mk = (vs, fs) => {
     const m = new THREE.ShaderMaterial({
-      uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, common]), vertexShader: vs, fragmentShader: fs,
+      uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, common]), vertexShader: '#define WATER_Y ' + MAP.WATER_Y.toFixed(3) + '\n' + vs, fragmentShader: fs,
       transparent: true, depthWrite: false, fog: true
     });
     m.uniforms.uH.value = H.tex;   // merge клонирует текстуры — возвращаем общую
     return m;
   };
-  rainMesh = new THREE.Mesh(quadsIG(Math.round(7000 + 17000 * Q.tex)), mk(RAIN_VS, RAIN_FS));
+  rainMesh = new THREE.Mesh(quadsIG(Math.round(24000 * (Q.rain ?? 1))), mk(RAIN_VS, RAIN_FS));
   rainMesh.frustumCulled = false; rainMesh.renderOrder = 9;
   splashMesh = new THREE.Mesh(quadsIG(Math.round(300 + 500 * Q.tex)), mk(SPLASH_VS, SPLASH_FS));
   splashMesh.frustumCulled = false; splashMesh.renderOrder = 9;
@@ -296,7 +297,7 @@ export function updateWeather(dt, sky) {
     u.uW.value.set(WIND.dir.x * WIND.strength, WIND.dir.y * WIND.strength);
     u.uL.value.copy(sky.fogColor).multiplyScalar(1.5).addScalar(0.05 * (1 - sky.night));
     u.uFlashR.value = W.flash;
-    mesh.visible = I > 0.01 && cp.y - hFast(cp.x, cp.z) < 60;
+    mesh.visible = I > 0.01 && cp.y - hFast(cp.x, cp.z) < 60 && !(cp.y < MAP.WATER_Y && hFast(cp.x, cp.z) < MAP.WATER_Y);
   }
   return W;
 }

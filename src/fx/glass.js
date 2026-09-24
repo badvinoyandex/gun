@@ -4,6 +4,7 @@ import { sr, srnd, TAU } from '../core/math.js';
 import { PHYS, addBody } from '../core/physics.js';
 import { FX } from './particles.js';
 import { glassSound } from './audio.js';
+import { addBox, CAPTURE } from '../core/colliders.js';
 
 /* ============================================================================
    СТЕКЛО
@@ -22,6 +23,9 @@ export function addPane(x, y, z, rot, w, h, o = {}) {
   const q = new THREE.Quaternion().setFromEuler(_e);
   const p = { pos: new THREE.Vector3(x, y, z), q, w, h, alive: true, i: PANES.length, tint: o.tint ?? 0, normal: new THREE.Vector3(0, 0, 1).applyQuaternion(q) };
   PANES.push(p);
+  // коллайдер для дрона: стекло держит, пока не разбито (в физику идёт отдельным телом)
+  if (Math.abs(rot[0]) < 0.35 && Math.abs(rot[2]) < 0.35) { p.col = addBox(x, y, z, w, h * Math.cos(rot[0]), 0.05, rot[1], { walk: false }); p.col.dyn = true; p.col.pane = p; }
+  p.panel = CAPTURE.panel || null;
   return p;
 }
 export function buildGlass() {
@@ -54,6 +58,7 @@ function paneBody(p) {
 export function breakPane(p, dir, force = 4, hit = null) {
   if (!p.alive) return;
   p.alive = false; writePane(p);
+  if (p.col) p.col.dead = true;
   if (p.body) { PHYS.world.removeRigidBody(p.body); p.body = null; }
   const right = new THREE.Vector3(1, 0, 0).applyQuaternion(p.q), up = new THREE.Vector3(0, 1, 0).applyQuaternion(p.q);
   const n = Math.min(16, 5 + Math.round(p.w * p.h * 14));
@@ -69,7 +74,7 @@ export function breakPane(p, dir, force = 4, hit = null) {
     mesh.position.copy(pos); mesh.quaternion.copy(q);
     scene.add(mesh);
     const b = addBody({ shape: 'box', size: [s, s * 0.8, 0.03], mass: 0.08, pos, quat: q, vel, ang: new THREE.Vector3(sr(-15, 15), sr(-15, 15), sr(-15, 15)),
-      mesh, life: sr(14, 24), friction: 0.5, restitution: 0.35, ccd: 0.02, onDone: () => { scene.remove(mesh); g.dispose(); } });
+      mesh, life: sr(14, 24), friction: 0.5, restitution: 0.35, ccd: 0.02, float: 0, rad: 0.02, onDone: () => { scene.remove(mesh); g.dispose(); } });
     if (!b) { // без физики — просто падающие блёстки
       scene.remove(mesh); g.dispose();
     }
@@ -109,4 +114,5 @@ export function updateGlass() {
   }
 }
 export const paneByIndex = idx => PANES[-1000 - idx];
+export const breakPaneRef = (p, dir, force) => breakPane(p, dir, force);
 export const glassStats = () => ({ panes: PANES.length, intact: PANES.filter(p => p.alive).length });

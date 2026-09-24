@@ -11,13 +11,16 @@ import { lerp } from '../core/math.js';
 /* Пост-обработка: блум (ночью сильнее — фонари «дышат» в тумане), цветокор
    с ночным сдвигом в холодное и потерей насыщенности, виньетка, зерно. */
 const Grade = {
-  uniforms: { tDiffuse: { value: null }, uFlash: { value: 0 }, uNight: { value: 0 }, uSat: { value: 1.05 }, uVig: { value: 0.25 }, uT: { value: 0 }, uHit: { value: 0 }, uWarm: { value: 0 } },
+  uniforms: { tDiffuse: { value: null }, uFlash: { value: 0 }, uUnder: { value: 0 }, uNight: { value: 0 }, uSat: { value: 1.05 }, uVig: { value: 0.25 }, uT: { value: 0 }, uHit: { value: 0 }, uWarm: { value: 0 } },
   vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
   fragmentShader: `
-    uniform sampler2D tDiffuse; uniform float uNight, uSat, uVig, uT, uHit, uWarm, uFlash; varying vec2 vUv;
+    uniform sampler2D tDiffuse; uniform float uNight, uSat, uVig, uT, uHit, uWarm, uFlash, uUnder; varying vec2 vUv;
     float h(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
     void main(){
-      vec4 c = texture2D(tDiffuse, vUv);
+      vec2 uv = vUv;
+      // под водой: колышущаяся картинка
+      if (uUnder > 0.0) uv += vec2(sin(vUv.y * 24.0 + uT * 2.1), cos(vUv.x * 21.0 + uT * 1.7)) * 0.0025 * uUnder;
+      vec4 c = texture2D(tDiffuse, uv);
       float l = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722));
       c.rgb = mix(vec3(l), c.rgb, uSat);
       // ночное зрение: холоднее и беднее цветом, но тёплые огни остаются тёплыми
@@ -31,6 +34,12 @@ const Grade = {
       c.rgb += (h(vUv * 1000.0 + uT) - 0.5) * (0.018 + uNight * 0.02);
       // контузия: красный край и смаз
       c.rgb = mix(c.rgb, c.rgb * vec3(1.2, 0.55, 0.5), uHit * smoothstep(0.1, 0.7, length(d) * 1.4));
+      // под водой: торфяная муть, тёмные края
+      if (uUnder > 0.0) {
+        float lu = dot(c.rgb, vec3(0.3, 0.55, 0.15));
+        c.rgb = mix(c.rgb, vec3(lu * 0.55, lu * 0.8, lu * 0.62) + vec3(0.0, 0.012, 0.01), 0.65 * uUnder);
+        c.rgb *= 1.0 - dot(d, d) * 1.6 * uUnder;
+      }
       // вспышка молнии: холодный засвет кадра
       c.rgb += vec3(0.5, 0.55, 0.7) * uFlash * 0.06 + c.rgb * uFlash * 0.25;
       gl_FragColor = c;
@@ -50,8 +59,9 @@ export function buildPost() {
   smaa.enabled = Q.smaa;
   composer.addPass(smaa);
 }
-export function updatePost(sky, hit, flash = 0) {
+export function updatePost(sky, hit, flash = 0, under = 0) {
   grade.uniforms.uFlash.value = flash;
+  grade.uniforms.uUnder.value = under;
   grade.uniforms.uNight.value = sky.night;
   grade.uniforms.uSat.value = lerp(1.06, 0.88, sky.night);
   grade.uniforms.uVig.value = lerp(0.22, 0.42, sky.night);

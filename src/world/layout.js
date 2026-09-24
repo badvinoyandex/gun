@@ -87,23 +87,48 @@ export const RING_ROAD = addPath(RING, 4.0, 'road', { closed: true, lit: true, n
 
 export const CLUSTERS = {
   T: { x: -50, z: -50, name: 'Турбаза «Лесное»' },
-  K: { x: 50, z: 50, name: 'Лесной кордон' }
+  K: { x: 62, z: 62, name: 'Пионерлагерь «Волчонок»' }
 };
+/* Пионерлагерь «Волчонок» на юго-восточном конце озера — вместо кордона.
+   Локальные оси лагеря: r — вправо (если стоять лицом к озеру), f — к озеру.
+   Территория r ∈ [−22, 22], f ∈ [−20, 16], ворота — посередине передней стороны. */
+export const CAMP = { x: 62, z: 62, r0: -22, r1: 22, f0: -20, f1: 16 };
+export const campXZ = (r, f) => [CAMP.x + (r - f) * S2, CAMP.z + (-r - f) * S2];
+/** Поворот постройки, фасад которой смотрит вдоль локального направления (dr, df). */
+export const campRot = (dr, df) => { const [x0, z0] = campXZ(0, 0), [x1, z1] = campXZ(dr, df); return Math.atan2(x1 - x0, z1 - z0); };
+export const inCamp = (x, z, pad = 0) => {
+  const dx = x - CAMP.x, dz = z - CAMP.z, r = (dx - dz) * S2, f = (-dx - dz) * S2;
+  return r > CAMP.r0 - pad && r < CAMP.r1 + pad && f > CAMP.f0 - pad && f < CAMP.f1 + pad;
+};
+const C = campXZ;
 
-// Дорога от кольца через турбазу на север — в минное поле (разбитый блокпост).
-addSym([[-33.5, -33.5], [-42, -41], [-50, -50], [-56, -66], [-61, -88], [-63, -108], [-64, -140]],
-  3.8, 'road', { lit: false, name: 'старая дорога' });
+// Турбаза: дорога от кольца через неё на север — в минное поле (разбитый блокпост).
+addPath([[-33.5, -33.5], [-42, -41], [-50, -50], [-56, -66], [-61, -88], [-63, -108], [-64, -140]], 3.8, 'road', { lit: false, name: 'старая дорога' });
+// Лагерь: дорога от кольца к воротам, дальше вдоль забора снаружи — к тому же разбитому блокпосту.
+addPath([[33.5, 33.5], [42, 41], C(0, 20.5), C(-13, 22), C(-26.5, 17), C(-26.5, -20), C(-20, -27), [63, 108], [64, 140]], 3.8, 'road', { lit: false, name: 'дорога к лагерю' });
 // Внутренние дорожки турбазы — с фонарями и лавочками.
-addSym([[-50, -50], [-57, -51], [-63, -49], [-68.5, -45]], 1.9, 'trail', { lit: true, name: 'аллея турбазы' });
-addSym([[-57, -51], [-61, -55.5], [-63.8, -57.6]], 1.7, 'trail', { lit: true, name: 'к корпусу' });
-addSym([[-50, -50], [-48, -62], [-46.4, -71]], 1.7, 'trail', { lit: true, name: 'к домику' });
-addSym([[-17.5, -40.4], [-17, -37.4]], 1.6, 'trail', { lit: true, name: 'к бане' });
+addPath([[-50, -50], [-57, -51], [-63, -49], [-68.5, -45]], 1.9, 'trail', { lit: true, name: 'аллея турбазы' });
+addPath([[-57, -51], [-61, -55.5], [-63.8, -57.6]], 1.7, 'trail', { lit: true, name: 'к корпусу' });
+addPath([[-50, -50], [-48, -62], [-46.4, -71]], 1.7, 'trail', { lit: true, name: 'к домику' });
+addPath([[-17.5, -40.4], [-17, -37.4]], 1.6, 'trail', { lit: true, name: 'к бане' });
+// Дорожки лагеря: центральная аллея, линейка, боковые аллеи к корпусам, к столовой, умывальнику, туалетам.
+// Фонари на них мерцают бледно-жёлтым.
+addPath([C(0, 18), C(0, 7)], 2.6, 'trail', { lit: true, camp: true, name: 'аллея лагеря' });
+addPath([C(0, 6), C(0, -3)], 8, 'trail', { lit: false, camp: true, name: 'линейка' });
+addPath([C(0, -3), C(0, -8.2)], 2.4, 'trail', { lit: true, camp: true, name: 'к столовой' });
+addPath([C(-10, 2), C(10, 2)], 2, 'trail', { lit: false, camp: true, name: 'поперечная аллея' });
+addPath([C(-10, 13), C(-10, -12), C(-12, -15.6)], 1.8, 'trail', { lit: true, camp: true, name: 'левая аллея' });
+addPath([C(10, 13), C(10, -12), C(13.5, -15.2)], 1.8, 'trail', { lit: true, camp: true, name: 'правая аллея' });
+addPath([C(-10, -12), C(-16.5, -14.6)], 1.3, 'trail', { lit: false, camp: true, name: 'к туалетам' });
+addPath([C(-10, 4), C(-17, 4.3), C(-24, 4)], 1.4, 'trail', { lit: false, camp: true, name: 'к калитке' });
 addSym([[-39.5, -39.5], [-34, -31.5], [-30.6, -30.6]], 1.8, 'trail', { lit: true, name: 'к пирсу' });
 
 // Тропы от баз. Три линии: левый фланг, центр, правый фланг.
 addSym([[-84, 84], [-92, 58], [-90, 28], [-82, 0], [-72, -24], [-60, -40], [-50, -50]], 2.2, 'trail', { name: 'западная тропа' });
 addSym([[-84, 84], [-70, 70], [-56, 56], [-42, 42], [-26, 26]], 2.4, 'trail', { name: 'центральная тропа' });
-addSym([[-84, 84], [-58, 94], [-30, 96], [-2, 90], [22, 80], [40, 66], [50, 50]], 2.2, 'trail', { name: 'южная тропа' });
+addPath([[84, -84], [58, -94], [30, -96], [2, -90], [-22, -80], [-40, -66], [-50, -50]], 2.2, 'trail', { name: 'южная тропа*' });
+// у лагеря тропа выходит к калитке в заборе
+addPath([[-84, 84], [-58, 94], [-30, 96], [-2, 90], [22, 80], [34, 79], C(-24, 4)], 2.2, 'trail', { name: 'южная тропа' });
 // Поперечные связки между линиями.
 addSym([[-82, 0], [-62, -2], [-41, -7]], 1.8, 'trail', { name: 'связка З' });
 addSym([[-2, 90], [2, 66], [6.5, 41]], 1.8, 'trail', { name: 'связка Ю' });
@@ -140,6 +165,9 @@ function makeIndex(lines, pad) {
   });
   return grid;
 }
+// Мост на остров: от кольцевой к береговому устою (вторая половина — у Delta).
+export const BRIDGE = { phi: 5.38 };
+addSym([lakeContour(BRIDGE.phi, 11.5), lakeContour(BRIDGE.phi, 6.5), lakeContour(BRIDGE.phi, 2.2)], 1.6, 'trail', { name: 'к мосту' });
 const PATH_IDX = makeIndex(PATHS, 3);
 /* ---------- Окопы ----------
    Зигзаг (траверсы через 5 м) гасит продольный огонь. Линия, пересекающая
@@ -196,7 +224,7 @@ function arc(cx, cz, r, a0, a1, step, amp) {
   trenchSym(zigzag(cx, cz, ax, az, -28, -3, 1.6), { name: 'рубеж, левое крыло', dugout0: true, bays: true });
   trenchSym(zigzag(cx, cz, ax, az, 3, 28, 1.6), { name: 'рубеж, правое крыло', bays: true });
   // Ход сообщения от рубежа к базе.
-  trenchSym([[-54.8, 70.2], [-58, 74], [-62, 76], [-66, 80], [-70.5, 83.5]], { name: 'ход сообщения', depth: 1.5 });
+  trenchSym([[-54.8, 70.2], [-58, 74], [-62, 76], [-66, 80], [-70.5, 83.5]], { name: 'ход сообщения', depth: 1.95, covered: true });
   // Вторая линия: дуга вокруг базы в 19 м, траверсы через 4 м.
   const A = SPAWNS.A;
   trenchSym(arc(A.x, A.z, 22, -1.74, 0.26, 4, 0.8), { name: 'вторая линия', depth: 1.55, bays: true, dugout1: true });
@@ -219,10 +247,27 @@ function arc(cx, cz, r, a0, a1, step, amp) {
   trenchSym(zigzag(-40, 40, S2, S2, -15, 15, 1.2, 4), { name: 'окоп у кольцевой', depth: 1.5, bays: true });
   // Передовые ячейки на берегу.
   const a = lakeXZ(-9, -27), b = lakeXZ(0, -28.5), c = lakeXZ(9, -27);
-  trenchSym([a, b, c], { name: 'береговые ячейки', depth: 1.5 });
-  // Старая траншея у турбазы (обе стороны подходов) и у кордона.
-  trenchSym([[-85, -28], [-82, -33], [-83, -38], [-80, -43], [-81, -49]], { name: 'траншея турбазы З', depth: 1.5 });
-  trenchSym([[-52, -81], [-46, -84], [-40, -82], [-34, -85]], { name: 'траншея турбазы С', depth: 1.5 });
+  trenchSym([a, b, c], { name: 'береговые ячейки', depth: 1.6, lake: true });
+  // Старые траншеи у турбазы.
+  addTrench([[-85, -28], [-82, -33], [-83, -38], [-80, -43], [-81, -49]], { name: 'траншея турбазы З', depth: 1.5 });
+  addTrench([[-52, -81], [-46, -84], [-40, -82], [-34, -85]], { name: 'траншея турбазы С', depth: 1.5 });
+  // Лагерь: окопы за забором — с боков и у задних ворот, изломом.
+  const Cz = (pts) => pts.map(([r, f]) => campXZ(r, f));
+  addTrench(Cz([[26.5, 12], [28, 7], [26.5, 2], [28, -3], [26.5, -8], [28, -13]]), { name: 'окоп у лагеря В', depth: 1.6, bays: true });
+  addTrench(Cz([[-31, 12], [-32.5, 6], [-31, 0], [-32.5, -6], [-31, -12]]), { name: 'окоп у лагеря З', depth: 1.6, bays: true });
+  addTrench(Cz([[-6, -24.5], [0, -26], [6, -24.5], [12, -26], [18, -24.5]]), { name: 'окоп за лагерем', depth: 1.6, bays: true });
+  // Берег озера: ячейки и траншеи между водой и кольцевой, у обеих баз — кромка
+  // сырая, дно не ниже уровня воды (иначе окоп затопит), зато бруствер выше.
+  for (const [p0, p1, off] of [[3.62, 3.98, 6.2], [4.18, 4.5, 6.4], [4.95, 5.3, 6.4], [5.86, 6.1, 6.2]]) {
+    const pts = [];
+    for (let k = 0, n = 7; k <= n; k++) pts.push(lakeContour(p0 + (p1 - p0) * k / n, off + (k % 2 ? 0.9 : -0.9) * (k > 0 && k < n ? 1 : 0)));
+    trenchSym(pts, { name: 'береговая траншея', depth: 1.7, bays: true, lake: true });
+  }
+  // Ход сообщения: от правого крыла рубежа к берегу.
+  trenchSym([[-40.5, 70], [-36, 62], [-33, 55], [-29, 49]], { name: 'ход к берегу', depth: 1.6 });
+  // Секреты на фланге у минного поля и у связки Ю.
+  trenchSym(zigzag(-96, 8, 0.2, -0.98, -6, 6, 1.1, 4), { name: 'секрет у минного поля', depth: 1.6, bays: true });
+  trenchSym(zigzag(-12, 76, 0.94, 0.34, -7, 7, 1.1, 4.5), { name: 'окоп у связки Ю', depth: 1.6, bays: true });
 }
 // Концы: стык с другим окопом — открыт, иначе аппарель. Сторона противника — к центру карты.
 for (let i = 0; i < TRENCH_PLAN.length; i++) {
@@ -235,7 +280,7 @@ for (let i = 0; i < TRENCH_PLAN.length; i++) {
   const len = polyLength(pts);
   TRENCHES.push({
     pts, len, depth: opt.depth ?? 1.8, name: opt.name || '', open0: near(pts[0]) < 1.3, open1: near(pts[pts.length - 1]) < 1.3,
-    bays: !!opt.bays, dugout0: !!opt.dugout0, dugout1: !!opt.dugout1, nest1: !!opt.nest1
+    bays: !!opt.bays, dugout0: !!opt.dugout0, dugout1: !!opt.dugout1, nest1: !!opt.nest1, lake: !!opt.lake, covered: !!opt.covered
   });
 }
 
@@ -279,6 +324,127 @@ export function trenchDist(x, z, out) {
   const r = nearestSeg(TRENCH_IDX, x, z, out || { d: 0, s: 0, seg: null });
   return r.d;
 }
+/* ---------- Ручей в овраге ----------
+   Течёт из леса за минным полем к озеру и пересекает тропу (кладка) и кольцевую
+   (труба под дорогой). Дно ровно понижается к устью: профиль — бегущий минимум
+   симметризованных холмов минус глубина оврага. Второй ручей — зеркальный. */
+export const STREAMS = [];
+function addStream(pts, name) {
+  const sm = resample(chaikin(pts, 3), 1), L = polyLength(sm), n = Math.ceil(L) + 1;
+  const bed = new Float32Array(n);
+  let run = 1e9;
+  for (let i = 0; i < n; i++) {
+    const a = polyAt(sm, Math.min(L, i));
+    run = Math.min(run, baseH(a.x, a.z));
+    const depth = lerp(0.7, 2.3, smoothstep(0, 16, i));
+    bed[i] = run - depth;
+  }
+  // устье: дно выходит к уровню воды и дальше — под воду
+  // дно не опускается ниже уровня озера: к устью овраг мелеет, вода выходит к плёсу
+  for (let i = 1; i < n; i++) bed[i] = Math.min(bed[i], bed[i - 1] - 0.004);
+  for (let i = 0; i < n; i++) bed[i] = Math.max(bed[i], MAP.WATER_Y - 0.35 + 0.006 * (n - 1 - i));
+  STREAMS.push({ pts: sm, len: L, bed, w: 11, name });
+}
+{
+  const S = [[20, 140], [19, 118], [18, 104], [17, 92], [16, 80], [14, 68], [13, 56], [12, 46], [11, 38], [10, 30], [9, 26]];
+  addStream(S, 'ручей Студёный');
+  addStream(mirrorPts(S), 'ручей Студёный*');
+}
+const STREAM_IDX = makeIndex(STREAMS, 6);
+export const STREAM_BW = 1.05;     // полуширина плоского дна (вода)
+/** Ручей рядом с точкой: d — до оси, s — по течению, bed — дно, water — зеркало воды. */
+export function streamAt(x, z, out = {}) {
+  const r = nearestSeg(STREAM_IDX, x, z, { d: 0, s: 0, seg: null });
+  if (!r.seg) { out.d = 1e9; return out; }
+  const st = STREAMS[r.seg.li], i = clamp(r.s, 0, st.bed.length - 1.001), i0 = Math.floor(i);
+  out.d = r.d; out.s = r.s; out.st = st;
+  out.bed = lerp(st.bed[i0], st.bed[i0 + 1], i - i0);
+  out.water = out.bed + 0.2;
+  return out;
+}
+const _sq = {};
+function streamCarve(x, z, h) {
+  streamAt(x, z, _sq);
+  if (_sq.d > 9) return h;
+  const d = _sq.d, bw = STREAM_BW;
+  // берега: крутые у воды, выполаживаются к бровке; по бровке — лёгкий вал
+  const bank = _sq.bed + 2.9 * smoothstep(bw, bw + 3.4, d) + Math.max(0, d - bw - 3.4) * 0.35;
+  const k = 0.2;                                          // мягкий минимум — без излома на бровке
+  const m = h - bank;
+  const carved = m > k ? bank : m < -k ? h : bank + (m + k) * (m + k) / (4 * k);
+  // валы из вынутого грунта по обоим берегам: овраг глубже, у устья сходят на нет
+  const taper = 1 - smoothstep(_sq.st.len - 26, _sq.st.len - 8, _sq.s);
+  return carved + 0.8 * Math.exp(-Math.pow((d - bw - 4.3) / 1.35, 2)) * taper;
+}
+
+/* ---------- Болото ----------
+   Сырая низина с кочками и окнами воды. Кочки — симметризованный шум, поэтому
+   болота у Alpha и Delta одинаковые. Ход по болоту медленный и хлюпает. */
+export const BOGS = [{ x: -22, z: 52, r: 10.5 }, { x: 22, z: -52, r: 10.5 }];
+const symN = (x, z, f, o = 0) => 0.5 * (vnoise(x * f + o, z * f - o) + vnoise(-x * f + o, -z * f - o));
+function bogShape(b, x, z) {
+  const dx = x - b.x, dz = z - b.z, a = Math.atan2(dz * Math.sign(b.z), dx * Math.sign(b.z));
+  const rr = b.r * (1 + 0.16 * Math.sin(2 * a + 0.7) + 0.08 * Math.sin(4 * a + 1.9));
+  return Math.hypot(dx, dz) / rr;
+}
+export function bogLevel(b) {
+  if (b.level === undefined) {
+    let lo = 1e9;
+    for (let i = 0; i < 24; i++) { const a = i / 24 * Math.PI * 2; lo = Math.min(lo, baseH(b.x + Math.cos(a) * b.r * 1.25, b.z + Math.sin(a) * b.r * 1.25)); }
+    b.level = Math.min(lo, baseH(b.x, b.z)) - 0.32;
+  }
+  return b.level;
+}
+/** Маска болота 0..1 (1 — середина). */
+export function inBog(x, z) {
+  let m = 0;
+  for (const b of BOGS) { const q = bogShape(b, x, z); if (q < 1.15) m = Math.max(m, 1 - smoothstep(0.7, 1.15, q)); }
+  return m;
+}
+function bogCarve(x, z, h) {
+  for (const b of BOGS) {
+    const q = bogShape(b, x, z);
+    if (q >= 1.15) continue;
+    const m = 1 - smoothstep(0.7, 1.15, q);
+    const hum = (symN(x, z, 0.75) - 0.5) * 0.55 + (symN(x, z, 2.1, 7) - 0.5) * 0.16 + 0.07;
+    h = lerp(h, bogLevel(b) + hum, m);
+  }
+  return h;
+}
+
+/* ---------- Броды ----------
+   У концов озера — песчаные косы от устья ручья поперёк плёса: вода по колено,
+   по косе выложены плоские камни. Вторая коса — зеркальная. */
+export const FORDS = [];
+{
+  const a = lakeContour(5.58, 0.6), b = lakeContour(0.93, 0.6);
+  FORDS.push({ a, b }, { a: [-a[0], -a[1]], b: [-b[0], -b[1]] });
+}
+function fordBed(x, z, bed) {
+  for (const f of FORDS) {
+    const d = polyDist(x, z, [f.a, f.b]);
+    if (d > 3.4) continue;
+    const top = MAP.WATER_Y - 0.4 + (symN(x, z, 0.9) - 0.5) * 0.14;
+    bed = Math.max(bed, lerp(top, bed, smoothstep(1.4, 3.4, d)));
+  }
+  return bed;
+}
+
+/* ---------- Погреба и подвалы ----------
+   Яма под полом дома (регистрируется при планировке построек): рельеф опускается
+   под самим домом, снаружи земля не меняется. Стены погреба закрывают откосы. */
+export const DIGS = [];     // {x, z, hw, hd, rot, depth, pad}
+export function addDig(o) { DIGS.push(o); return o; }
+function digCarve(x, z, h) {
+  for (const g of DIGS) {
+    const d = padRectDist(g, x, z);
+    if (d > 0.8) continue;
+    const bottom = g.pad.y - g.depth;
+    h = Math.min(h, lerp(bottom, h, smoothstep(0, 0.8, d)));
+  }
+  return h;
+}
+
 /* ---------- Воронки ---------- */
 export const CRATERS = [];
 {
@@ -288,8 +454,9 @@ export const CRATERS = [];
     const x = R.range(-100, 100), z = R.range(-100, 100), r = R.range(1.6, 3.4);
     if (lakeRho(x, z) < 1.25) continue;
     if (pathInfluence(x, z, 2) > 0 || trenchDist(x, z) < r + 2.5) continue;
+    if (streamAt(x, z).d < r + 6 || inBog(x, z) > 0 || inBog(-x, -z) > 0) continue;
     if (Math.hypot(x - SPAWNS.A.x, z - SPAWNS.A.z) < 22 || Math.hypot(x - SPAWNS.D.x, z - SPAWNS.D.z) < 22) continue;
-    if (Math.hypot(x - CLUSTERS.T.x, z - CLUSTERS.T.z) < 20 || Math.hypot(x - CLUSTERS.K.x, z - CLUSTERS.K.z) < 20) continue;
+    if (Math.hypot(x - CLUSTERS.T.x, z - CLUSTERS.T.z) < 20 || Math.hypot(-x - CLUSTERS.T.x, -z - CLUSTERS.T.z) < 20 || inCamp(x, z, 8) || inCamp(-x, -z, 8)) continue;
     CRATERS.push({ x, z, r }, { x: -x, z: -z, r });
   }
   // минная полоса обстреляна плотнее (тоже парами — рельеф у обеих баз одинаковый)
@@ -299,6 +466,14 @@ export const CRATERS = [];
     const [x, z] = side === 0 ? [s, -d] : side === 1 ? [s, d] : side === 2 ? [-d, s] : [d, s];
     const r = Rm.range(1.2, 2.8);
     CRATERS.push({ x, z, r, mine: true }, { x: -x, z: -z, r, mine: true });
+  }
+  // старый огневой вал: цепочка заросших воронок поперёк луга (след давнего обстрела)
+  const Rl = rng(773);
+  for (let i = 0; i < 9; i++) {
+    const t = i / 8, x = lerp(-62, -66, t) + Rl.range(-1.6, 1.6), z = lerp(4, 38, t) + Rl.range(-1.2, 1.2), r = Rl.range(1.7, 2.9);
+    if (pathInfluence(x, z, 2) > 0 || trenchDist(x, z) < r + 2.5 || streamAt(x, z).d < r + 6) continue;
+    if (CRATERS.some(c => Math.hypot(c.x - x, c.z - z) < c.r + r + 0.5)) continue;
+    CRATERS.push({ x, z, r, old: true }, { x: -x, z: -z, r, old: true });
   }
 }
 
@@ -346,11 +521,14 @@ export function terrainH(x, z) {
     const shore = MAP.WATER_Y + 0.12 + Math.max(0, rho - 1) * 3.2;
     const land = lerp(shore, h, smoothstep(1.0, 2.2, rho));
     const bed = MAP.WATER_Y + 0.12 - 3.4 * smoothstep(1.0, 0.45, rho) - 0.35 * smoothstep(1.0, 0.9, rho);
-    h = rho >= 1 ? land : bed;
+    h = rho >= 1 ? land : fordBed(x, z, bed);
     // островок в центре
     const di = Math.hypot(x - ISLAND.x, z - ISLAND.z);
     if (di < ISLAND.r + 3) h = Math.max(h, MAP.WATER_Y - 2.5 + 3.4 * (1 - smoothstep(2.2, ISLAND.r, di)));
   }
+  // Овраг ручья и болото — до площадок и окопов.
+  h = streamCarve(x, z, h);
+  h = bogCarve(x, z, h);
   // Площадки под домами и базами — выровнены.
   for (const p of PADS) {
     const d = padRectDist(p, x, z);
@@ -358,6 +536,7 @@ export function terrainH(x, z) {
     if (p.y === undefined) p.y = baseH(p.x, p.z);
     h = lerp(h, p.y, 1 - smoothstep(0, p.m, d));
   }
+  h = digCarve(x, z, h);
   // Окопы: ровное дно, почти отвесная стенка за обшивкой, бруствер.
   let carve = 0, parapet = 0;
   nearestSeg(TRENCH_IDX, x, z, _tq);
@@ -365,8 +544,12 @@ export function terrainH(x, z) {
     const tr = TRENCHES[_tq.seg.li];
     const s = _tq.s, taper = trenchTaper(tr, s);
     carve = (1 - smoothstep(TW.floor, TW.top, _tq.d)) * taper;
-    parapet = 0.42 * Math.exp(-Math.pow((_tq.d - 1.6) / 0.5, 2)) * (0.4 + 0.6 * taper);
-    h -= tr.depth * carve;
+    parapet = (tr.lake ? 0.75 : 0.42) * Math.exp(-Math.pow((_tq.d - 1.6) / 0.5, 2)) * (0.4 + 0.6 * taper);
+    // сырой берег: окоп в насыпи — грунт поднимается валом, дно остаётся выше воды
+    if (tr.lake) h += Math.max(0, MAP.WATER_Y + 1.75 - h) * (1 - smoothstep(1.3, 3.2, _tq.d)) * smoothstep(0, 2, Math.min(s, tr.len - s) + 1);
+    const cut = h - tr.depth * carve;
+    // у озера дно не опускается ниже воды: окоп сырой, но не затоплен
+    h = rho < 2.5 ? lerp(h, Math.max(cut, MAP.WATER_Y + 0.3), carve > 0 ? 1 : 0) : cut;
   }
   // Микрорельеф: кочки и корни — кроме троп и дна окопов.
   const pi = pathInfluence(x, z, 0, _pi);
@@ -381,7 +564,8 @@ export function terrainH(x, z) {
     const dx = x - c.x, dz = z - c.z;
     if (Math.abs(dx) > c.r * 1.6 || Math.abs(dz) > c.r * 1.6) continue;
     const d = Math.hypot(dx, dz) / c.r;
-    if (d < 1.6) h += -0.55 * c.r * 0.32 * Math.max(0, 1 - d * d) + 0.16 * c.r * 0.3 * Math.exp(-Math.pow((d - 1.05) / 0.25, 2));
+    // старые воронки заплыли: мельче, вал оплыл
+    if (d < 1.6) h += (c.old ? 0.55 : 1) * (-0.55 * c.r * 0.32 * Math.max(0, 1 - d * d) + 0.16 * c.r * 0.3 * Math.exp(-Math.pow((d - 1.05) / (c.old ? 0.4 : 0.25), 2)));
   }
   // Воронки, появившиеся в бою.
   for (let i = 0; i < DYN_CRATERS.length; i++) {
@@ -416,10 +600,15 @@ export function splat(x, z, out) {
   if (td < 2.6) dug = 1 - smoothstep(1.6, 2.6, td);
   for (const c of CRATERS) {
     const d = Math.hypot(x - c.x, z - c.z);
-    if (d < c.r * 1.5) dug = Math.max(dug, 1 - smoothstep(c.r * 0.8, c.r * 1.5, d));
+    if (d < c.r * 1.5) dug = Math.max(dug, (c.old ? 0.25 : 1) * (1 - smoothstep(c.r * 0.8, c.r * 1.5, d)));
   }
   const e = edgeDist(x, z);
   if (e > MAP.PLAY - 1 && e < MAP.MINE1 + 2) dug = Math.max(dug, 0.35 * smoothstep(0.35, 0.7, vnoise(x * 0.18, z * 0.18)));
+  // болото и сырое дно оврага — ил
+  const bog = inBog(x, z);
+  if (bog > 0) mud = Math.max(mud, bog * 0.95);
+  const sq = streamAt(x, z);
+  if (sq.d < 4.5) mud = Math.max(mud, 1 - smoothstep(STREAM_BW * 0.6, 4.5, sq.d));
   out[0] = pi; out[1] = mud; out[2] = dug;
   return out;
 }
@@ -432,6 +621,9 @@ export function isFree(x, z, r = 1, opt = {}) {
   if (Math.hypot(x - ISLAND.x, z - ISLAND.z) < ISLAND.r && opt.island !== true) return false;
   if (pathInfluence(x, z, r + (opt.pathPad ?? 0.6)) > 0) return false;
   if (trenchDist(x, z) < r + (opt.trenchPad ?? 1.8)) return false;
+  // овраг ручья и болото: ни столбов, ни машин, ни деревьев (у болота — свой сухостой)
+  if (opt.stream !== true && streamAt(x, z).d < r + STREAM_BW + 3.4) return false;
+  if (opt.bog !== true && inBog(x, z) > 0.05) return false;
   for (const k of KEEPOUT) { const dx = x - k.x, dz = z - k.z, R = k.r + r; if (dx * dx + dz * dz < R * R) return false; }
   for (const p of PADS) if (padRectDist(p, x, z) < r + 0.5) return false;
   return true;

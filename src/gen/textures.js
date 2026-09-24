@@ -325,8 +325,8 @@ export function grassTex() {
     const bx = W * sr(0.08, 0.92), bw = W * sr(0.025, 0.05), bh = H * sr(0.45, 0.98);
     const lean = sr(-0.25, 0.25) * W;
     const g = x.createLinearGradient(0, H, 0, H - bh);
-    const dry = srnd() < 0.25;
-    const top = dry ? [150, 138, 88] : [si(96, 124), si(110, 136), si(58, 74)];
+    const dry = srnd() < 0.34;
+    const top = dry ? [152, 138, 90] : [si(98, 120), si(106, 126), si(62, 76)];
     g.addColorStop(0, 'rgb(46,52,30)'); g.addColorStop(0.6, rgba(top[0] * 0.8, top[1] * 0.8, top[2] * 0.8));
     g.addColorStop(1, rgba(...top));
     x.fillStyle = g;
@@ -492,16 +492,117 @@ export function rustMetal(paint = [72, 96, 110], rust = 0.6, size = 512) {
   grain(x, S, S, 0.06);
   return { map: tex(c), normal: tex(heightToNormal(h, 1.8), 1, 1, false) };
 }
-/** Профнастил с рёбрами — кровля и заборы. */
-export function corrugated(paint = [96, 98, 92], rust = 0.8) {
+/** Профнастил с рёбрами — кровля и заборы. aged — старая кровля: краска выцвела
+    и посерела, ржавчина приглушена, по рёбрам тянутся тёмные потёки, у свеса мох и лишайник. */
+export function corrugated(paint = [96, 98, 92], rust = 0.8, aged = 0) {
   const r = rustMetal(paint, rust, 512);
-  const S = r.map.image.width, [h, hx] = cv(S), ribs = 10;
+  const S = r.map.image.width, [h, hx] = cv(S), ribs = 10, K = S / 512;
   for (let i = 0; i < S; i++) {
     const v = 128 + Math.sin(i / S * ribs * TAU) * 110;
     hx.fillStyle = rgba(v, v, v); hx.fillRect(i, 0, 1, S);
   }
+  if (aged > 0) {
+    const c = r.map.image, x = c.getContext('2d');
+    // выцветание: к серому и темнее, рыжина уходит в бурое
+    const id = x.getImageData(0, 0, S, S), d = id.data;
+    for (let i = 0; i < d.length; i += 4) {
+      const l = d[i] * 0.3 + d[i + 1] * 0.55 + d[i + 2] * 0.15, k = 0.5 * aged;
+      d[i] = (d[i] + (l - d[i]) * k) * (1 - 0.14 * aged); d[i + 1] = (d[i + 1] + (l - d[i + 1]) * k) * (1 - 0.1 * aged); d[i + 2] = (d[i + 2] + (l - d[i + 2]) * k) * (1 - 0.08 * aged);
+    }
+    x.putImageData(id, 0, 0);
+    // потёки по желобкам между рёбрами
+    for (let i = 0; i < 70 * aged; i++) {
+      const rib = Math.floor(srnd() * ribs), px = (rib + 0.5) / ribs * S + sr(-4, 4) * K, py = srnd() * S, L = sr(60, 260) * K;
+      const g = x.createLinearGradient(0, py, 0, py + L);
+      g.addColorStop(0, 'rgba(30,26,20,0)'); g.addColorStop(0.3, 'rgba(30,26,20,.35)'); g.addColorStop(1, 'rgba(30,26,20,0)');
+      x.fillStyle = g; x.fillRect(px - 3 * K, py, sr(3, 8) * K, L);
+    }
+    // мох и лишайник гнездятся у нижнего края листа и в желобках
+    for (let i = 0; i < 160 * aged; i++) {
+      const low = srnd() < 0.6, px = srnd() * S, py = low ? S - Math.pow(srnd(), 2) * S * 0.35 : srnd() * S;
+      const rr = sr(4, 20) * K, lich = srnd() < 0.35;
+      wrapDraw(x, S, S, () => blob(x, px, py, rr, lich ? [150, 156, 128] : [62, 76, 38], lich ? 0.35 : 0.55));
+    }
+    // пыль и хвоя в желобках
+    for (let i = 0; i < 1400 * aged * K * K; i++) {
+      const rib = Math.floor(srnd() * ribs), px = (rib + 0.5) / ribs * S + sr(-6, 6) * K, py = srnd() * S;
+      x.fillStyle = rgba(si(70, 110), si(58, 80), si(36, 50), sr(0.3, 0.7)); x.fillRect(px, py, sr(1, 2) * K, sr(3, 9) * K);
+    }
+    r.map.needsUpdate = true;
+  }
   const nrm = tex(heightToNormal(h, 4.0), 1, 1, false);
   return { map: r.map, normal: nrm };
+}
+/** Спил пня: годовые кольца, тёмная заболонь, трещины от сердцевины, серый налёт у старых. */
+export function stumpTop() {
+  const S = TS(256), [c, x] = cv(S), K = S / 256, C = S / 2;
+  x.fillStyle = '#4a3a2a'; x.fillRect(0, 0, S, S);
+  const R0 = S * 0.47;
+  for (let r = R0; r > 2; r -= sr(2.2, 4.5) * K) {
+    const v = sr(0.85, 1.12), k = r / R0;
+    x.strokeStyle = rgba(170 * v - 40 * k, 136 * v - 36 * k, 96 * v - 30 * k, 0.9);
+    x.lineWidth = sr(1.2, 2.6) * K;
+    x.beginPath();
+    for (let a = 0; a <= TAU + 0.01; a += 0.12) { const w = r * (1 + 0.035 * Math.sin(a * 3 + r * 0.1) + 0.02 * Math.sin(a * 7)); a === 0 ? x.moveTo(C + Math.cos(a) * w, C + Math.sin(a) * w) : x.lineTo(C + Math.cos(a) * w, C + Math.sin(a) * w); }
+    x.stroke();
+  }
+  // кора по краю
+  x.strokeStyle = '#2a2016'; x.lineWidth = 9 * K; x.beginPath(); x.arc(C, C, R0 + 3 * K, 0, TAU); x.stroke();
+  // радиальные трещины
+  for (let i = 0; i < 7; i++) {
+    const a = sr(0, TAU), L = sr(0.3, 0.9) * R0;
+    x.strokeStyle = 'rgba(28,20,12,.85)'; x.lineWidth = sr(1, 3) * K;
+    x.beginPath(); x.moveTo(C + Math.cos(a) * 4, C + Math.sin(a) * 4); x.lineTo(C + Math.cos(a + sr(-0.05, 0.05)) * L, C + Math.sin(a) * L); x.stroke();
+  }
+  // серый налёт и мох у края
+  for (let i = 0; i < 30; i++) { const a = sr(0, TAU), rr = sr(0.5, 1) * R0; blob(x, C + Math.cos(a) * rr, C + Math.sin(a) * rr, sr(8, 26) * K, srnd() < 0.5 ? [120, 116, 104] : [70, 86, 44], 0.35); }
+  grain(x, S, S, 0.06);
+  const t = tex(c); t.wrapS = t.wrapT = 1001; return t;
+}
+/** Пулевые пробоины, атлас 2×2: дерево (светлая щепа по краю), металл (блестящий
+    отогнутый край), штукатурка (скол) и след по касательной. */
+export function bulletHoles() {
+  const S = 256, H = S / 2, [c, x] = cv(S);
+  const cell = (i, fn) => { x.save(); x.translate((i % 2) * H + H / 2, (i >> 1) * H + H / 2); fn(); x.restore(); };
+  cell(0, () => {
+    for (let k = 0; k < 9; k++) { const a = sr(0, TAU), L = sr(14, 34); x.strokeStyle = rgba(196, 170, 128, sr(0.6, 0.95)); x.lineWidth = sr(2, 5); x.beginPath(); x.moveTo(0, 0); x.lineTo(Math.cos(a) * L, Math.sin(a) * L); x.stroke(); }
+    blob(x, 0, 0, 22, [30, 22, 14], 0.9); blob(x, 0, 0, 9, [6, 4, 2], 1);
+  });
+  cell(1, () => { blob(x, 0, 0, 26, [150, 150, 146], 0.8); x.strokeStyle = 'rgba(210,210,200,.9)'; x.lineWidth = 3; x.beginPath(); x.arc(0, 0, 11, 0, TAU); x.stroke(); blob(x, 0, 0, 10, [4, 4, 4], 1); blob(x, 0, 0, 36, [60, 40, 26], 0.25); });
+  cell(2, () => { for (let k = 0; k < 14; k++) { const a = sr(0, TAU), r = sr(10, 30); blob(x, Math.cos(a) * r * 0.6, Math.sin(a) * r * 0.6, sr(6, 14), [120, 116, 104], 0.6); } blob(x, 0, 0, 14, [40, 36, 32], 0.95); blob(x, 0, 0, 6, [8, 8, 8], 1); });
+  cell(3, () => { const g = x.createLinearGradient(-40, 0, 40, 0); g.addColorStop(0, 'rgba(20,16,10,0)'); g.addColorStop(0.7, 'rgba(20,16,10,.85)'); g.addColorStop(1, 'rgba(20,16,10,0)'); x.fillStyle = g; x.beginPath(); x.ellipse(0, 0, 40, 7, 0, 0, TAU); x.fill(); });
+  const t = tex(c); t.wrapS = t.wrapT = 1001; return t;
+}
+/** Лист бумаги от руки: позывные, частоты, пароль, схема. Сгибы, пятна, кнопка. */
+export function paperSheet(lines, o = {}) {
+  const W = o.w || 256, Hh = o.h || 340, [c, x] = cv(W, Hh);
+  x.fillStyle = o.bg || '#d9d2bd'; x.fillRect(0, 0, W, Hh);
+  for (let i = 0; i < 18; i++) blob(x, srnd() * W, srnd() * Hh, sr(10, 60), [150, 132, 96], sr(0.05, 0.16));
+  if (o.grid) { x.strokeStyle = 'rgba(80,110,150,.35)'; x.lineWidth = 1; for (let i = 8; i < W; i += 12) { x.beginPath(); x.moveTo(i, 0); x.lineTo(i, Hh); x.stroke(); } for (let i = 8; i < Hh; i += 12) { x.beginPath(); x.moveTo(0, i); x.lineTo(W, i); x.stroke(); } }
+  x.fillStyle = o.ink || '#1f2a4a'; x.textBaseline = 'top';
+  let y = 16;
+  for (const ln of lines) {
+    const big = ln.startsWith('#'), t = big ? ln.slice(1) : ln;
+    x.font = `${big ? 'bold ' : 'italic '}${big ? 22 : 17}px "Segoe Print","Comic Sans MS","Bradley Hand",cursive`;
+    x.save(); x.translate(14 + sr(-2, 2), y); x.rotate(sr(-0.02, 0.02)); x.fillText(t, 0, 0); x.restore();
+    y += big ? 30 : 24;
+  }
+  if (o.sketch) {
+    // схема: линия фронта зигзагом, стрелки, крестик
+    x.strokeStyle = o.ink || '#1f2a4a'; x.lineWidth = 2.5; x.beginPath();
+    for (let i = 0; i <= 8; i++) { const px = 20 + i * (W - 40) / 8, py = Hh - 110 + (i % 2 ? -10 : 10); i ? x.lineTo(px, py) : x.moveTo(px, py); } x.stroke();
+    x.strokeStyle = '#8a1e18'; x.lineWidth = 3;
+    for (const [ax, ay, bx, by] of [[50, Hh - 40, 80, Hh - 95], [W - 60, Hh - 40, W - 90, Hh - 98]]) { x.beginPath(); x.moveTo(ax, ay); x.lineTo(bx, by); x.lineTo(bx - 10, by + 6); x.moveTo(bx, by); x.lineTo(bx + 4, by + 12); x.stroke(); }
+    x.beginPath(); x.moveTo(W / 2 - 8, Hh - 150); x.lineTo(W / 2 + 8, Hh - 134); x.moveTo(W / 2 + 8, Hh - 150); x.lineTo(W / 2 - 8, Hh - 134); x.stroke();
+  }
+  // сгибы вчетверо
+  x.strokeStyle = 'rgba(90,80,60,.35)'; x.lineWidth = 2;
+  x.beginPath(); x.moveTo(W / 2, 0); x.lineTo(W / 2, Hh); x.moveTo(0, Hh / 2); x.lineTo(W, Hh / 2); x.stroke();
+  x.strokeStyle = 'rgba(255,255,245,.25)'; x.beginPath(); x.moveTo(W / 2 + 2, 0); x.lineTo(W / 2 + 2, Hh); x.stroke();
+  // кнопка
+  blob(x, W / 2, 10, 7, [150, 30, 24], 1); blob(x, W / 2 - 2, 8, 2, [255, 200, 190], 0.8);
+  grain(x, W, Hh, 0.05);
+  return tex(c);
 }
 /** Мешковина мешков с песком. */
 export function sackcloth() {
@@ -657,6 +758,60 @@ export function smokeTex() {
   }
   const t = tex(c); t.wrapS = t.wrapT = 1001; return t;
 }
+/** Атлас огня 2×2: [0] огненный шар, [1], [2] языки пламени, [3] искра.
+    Языки — капли, вытянутые вверх, с отростками; цвет от белого ядра к красной кайме. */
+export function fireAtlas() {
+  const S = 256, H = S / 2, [c, x] = cv(S);
+  const cell = (i, fn) => { x.save(); x.translate((i % 2) * H, (i >> 1) * H); x.beginPath(); x.rect(0, 0, H, H); x.clip(); fn(); x.restore(); };
+  const grad = (cx, cy, r) => {
+    const g = x.createRadialGradient(cx, cy, 0, cx, cy, r);
+    g.addColorStop(0, 'rgba(255,250,228,1)'); g.addColorStop(0.3, 'rgba(255,200,100,.92)');
+    g.addColorStop(0.65, 'rgba(230,92,24,.45)'); g.addColorStop(1, 'rgba(130,24,0,0)');
+    return g;
+  };
+  cell(0, () => { x.fillStyle = grad(64, 64, 60); x.fillRect(0, 0, H, H); });
+  const tongue = (cx, base, w, h, lean) => {
+    // капля: широкое основание, острый изогнутый кончик
+    x.beginPath();
+    x.moveTo(cx - w, base);
+    x.bezierCurveTo(cx - w * 1.1, base - h * 0.45, cx + lean * 0.5 - w * 0.3, base - h * 0.75, cx + lean, base - h);
+    x.bezierCurveTo(cx + lean * 0.5 + w * 0.4, base - h * 0.7, cx + w * 1.1, base - h * 0.4, cx + w, base);
+    x.closePath(); x.fill();
+  };
+  for (const i of [1, 2]) cell(i, () => {
+    x.filter = 'blur(5px)';
+    const R = i === 1 ? [0.2, -0.3, 0.5] : [-0.4, 0.35, -0.1];
+    x.fillStyle = grad(64, 100, 70);
+    tongue(64, 118, 30, 96, R[0] * 20);
+    x.fillStyle = grad(64, 104, 52);
+    tongue(44, 116, 14, 66 + R[1] * 20, R[1] * 22);
+    tongue(84, 116, 14, 62 - R[2] * 18, R[2] * 26);
+    x.globalCompositeOperation = 'lighter';
+    x.fillStyle = 'rgba(255,245,210,.55)';
+    tongue(64, 116, 14, 46, R[0] * 8);
+    x.globalCompositeOperation = 'source-over';
+    x.filter = 'none';
+  });
+  cell(3, () => { const g = x.createRadialGradient(64, 64, 0, 64, 64, 24); g.addColorStop(0, 'rgba(255,255,240,1)'); g.addColorStop(0.4, 'rgba(255,210,140,.8)'); g.addColorStop(1, 'rgba(255,140,40,0)'); x.fillStyle = g; x.fillRect(0, 0, H, H); });
+  const t = tex(c); t.wrapS = t.wrapT = 1001; return t;
+}
+/** Атлас дыма 2×2: четыре разных клуба. Сверху светлее, снизу темнее —
+    клуб читается объёмом, а не плоским пятном. */
+export function smokeAtlas() {
+  const S = 256, H = S / 2, [c, x] = cv(S);
+  for (let i = 0; i < 4; i++) {
+    const ox = (i % 2) * H, oy = (i >> 1) * H;
+    x.save(); x.beginPath(); x.rect(ox, oy, H, H); x.clip();
+    for (let k = 0; k < 34; k++) {
+      const a = sr(0, TAU), r = Math.sqrt(srnd()) * 30, px = 64 + Math.cos(a) * r, py = 64 + Math.sin(a) * r * 0.85;
+      const light = clamp(0.62 + (64 - py) / 90 + (64 - px) / 260, 0.35, 1);
+      const v = 150 + 105 * light;
+      blob(x, ox + px, oy + py, sr(12, 30), [v, v, v * 0.98], sr(0.1, 0.24));
+    }
+    x.restore();
+  }
+  const t = tex(c); t.wrapS = t.wrapT = 1001; return t;
+}
 /** Воронка: выжженный центр, выброс грунта лучами. */
 export function craterTex() {
   const S = 256, [c, x] = cv(S);
@@ -712,4 +867,44 @@ export function wattle() {
   }
   grain(x, S, S, 0.08);
   return { map: tex(c), normal: tex(heightToNormal(h, 2.2), 1, 1, false) };
+}
+/** Вывеска лагеря: облупленная эмаль, ржавые потёки, выцветшие буквы. */
+export function campSign(lines, o = {}) {
+  const w = o.w ?? 1024, h = o.h ?? 256, [c, x] = cv(w, h);
+  const bg = o.bg ?? '#b9302a', fg = o.fg ?? '#ece3c8';
+  x.fillStyle = bg; x.fillRect(0, 0, w, h);
+  // полосы старой краски
+  for (let i = 0; i < 40; i++) { x.fillStyle = `rgba(${o.dark ? '20,20,18' : '255,240,210'},${sr(0.02, 0.07)})`; x.fillRect(0, srnd() * h, w, sr(2, 12)); }
+  x.strokeStyle = fg; x.lineWidth = 8; x.strokeRect(18, 18, w - 36, h - 36);
+  x.fillStyle = fg; x.textAlign = 'center'; x.textBaseline = 'middle';
+  const n = lines.length;
+  lines.forEach((ln, i) => {
+    const sz = (o.sizes?.[i]) ?? (i === 0 ? h * 0.36 / Math.max(1, n * 0.7) : h * 0.2);
+    x.font = `bold ${sz}px "Arial Narrow", Arial, sans-serif`;
+    x.fillText(ln, w / 2, h / 2 + (i - (n - 1) / 2) * (h * 0.78 / n));
+  });
+  // облупилось до металла и ржавчины, потёки вниз
+  for (let i = 0; i < 90; i++) blob(x, srnd() * w, srnd() * h, sr(4, 30), [110, 70, 40], sr(0.25, 0.8));
+  for (let i = 0; i < 26; i++) {
+    const px = srnd() * w, py = srnd() * h * 0.6, g = x.createLinearGradient(0, py, 0, py + sr(40, 160));
+    g.addColorStop(0, 'rgba(90,50,24,.6)'); g.addColorStop(1, 'rgba(90,50,24,0)');
+    x.fillStyle = g; x.fillRect(px, py, sr(3, 9), 160);
+  }
+  for (let i = 0; i < 40; i++) blob(x, srnd() * w, srnd() * h, sr(3, 14), [40, 36, 30], sr(0.3, 0.9));
+  grain(x, w, h, 0.1);
+  const t = tex(c); t.wrapS = t.wrapT = 1001; return t;
+}
+/** Голова волчонка для арки: простой силуэт, как на значках. */
+export function wolfBadge() {
+  const [c, x] = cv(256);
+  x.fillStyle = '#d8cfb2'; x.beginPath(); x.arc(128, 128, 120, 0, 7); x.fill();
+  x.fillStyle = '#9b2a22'; x.beginPath(); x.arc(128, 128, 104, 0, 7); x.fill();
+  x.fillStyle = '#3a3530';
+  x.beginPath(); x.moveTo(70, 70); x.lineTo(96, 118); x.lineTo(60, 128); x.closePath(); x.fill();
+  x.beginPath(); x.moveTo(186, 70); x.lineTo(160, 118); x.lineTo(196, 128); x.closePath(); x.fill();
+  x.beginPath(); x.moveTo(64, 120); x.quadraticCurveTo(128, 90, 192, 120); x.lineTo(150, 196); x.lineTo(128, 214); x.lineTo(106, 196); x.closePath(); x.fill();
+  x.fillStyle = '#d8cfb2'; x.beginPath(); x.arc(106, 140, 7, 0, 7); x.arc(150, 140, 7, 0, 7); x.fill();
+  for (let i = 0; i < 50; i++) blob(x, srnd() * 256, srnd() * 256, sr(3, 16), [100, 70, 44], sr(0.2, 0.7));
+  grain(x, 256, 256, 0.1);
+  return tex(c);
 }

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { FXU, FXU_GLSL } from '../core/fxu.js';
 import { scene, Q } from '../core/env.js';
-import { MAP, terrainH, splat, edgeDist, TRENCHES, CRATERS, PADS, lakeRho, pathInfluence } from './layout.js';
+import { MAP, terrainH, splat, edgeDist, TRENCHES, CRATERS, PADS, lakeRho, pathInfluence, DIGS, STREAMS, BOGS, FORDS } from './layout.js';
 import { TEX } from '../gen/materials.js';
 import { forestDensity } from './forest.js';
 import { hFast } from './heightcache.js';
@@ -21,6 +21,11 @@ function chunkStep(x0, z0) {
   const inBox = (x, z) => x > x0 - pad && x < x1 + pad && z > z0 - pad && z < z1 + pad;
   for (const t of TRENCHES) for (const p of t.pts) if (inBox(p[0], p[1])) return Q.tex < 0.6 ? 0.32 : 0.25;
   for (const c of CRATERS) if (inBox(c.x, c.z)) return 0.5;
+  // погреб под домом: откосы ямы короче метра
+  for (const g of DIGS) if (inBox(g.x, g.z)) return 0.35;
+  for (const st of STREAMS) for (let i = 0; i < st.pts.length; i += 2) if (inBox(st.pts[i][0], st.pts[i][1])) return 0.5;
+  for (const b of BOGS) if (b.x > x0 - b.r - 2 && b.x < x1 + b.r + 2 && b.z > z0 - b.r - 2 && b.z < z1 + b.r + 2) return 0.6;
+  for (const f of FORDS) for (let t = 0; t <= 1; t += 0.1) if (inBox(f.a[0] + (f.b[0] - f.a[0]) * t, f.a[1] + (f.b[1] - f.a[1]) * t)) return 0.6;
   // берег острова и уреза — плавнее
   for (let i = 0; i <= 4; i++) for (let j = 0; j <= 4; j++) {
     const r = lakeRho(x0 + i * 4, z0 + j * 4);
@@ -231,6 +236,15 @@ function groundMaterial() {
         // тлеющие угли: мерцают под пеплом, ночью заметно подсвечивают землю
         float emb = gBurn.g * (0.6 + 0.4 * sin(uFxT * 7.0 + gNoise(vWPos.xz * 3.0) * 12.0)) * smoothstep(0.45, 0.85, gNoise(vWPos.xz * 4.3 + uFxT * 0.2));
         totalEmissiveRadiance += vec3(1.0, 0.3, 0.05) * emb * emb * 1.4;
+        // каустики: пляшущая сетка света на дне у берега
+        float uw = clamp((${MAP.WATER_Y.toFixed(3)} - vWPos.y) * 3.0, 0.0, 1.0) * clamp(1.0 - (${MAP.WATER_Y.toFixed(3)} - vWPos.y) * 0.35, 0.0, 1.0);
+        if (uw > 0.0 && uCaus > 0.0) {
+          vec2 cp = vWPos.xz * 0.9;
+          float c1 = abs(sin(cp.x * 2.1 + sin(cp.y * 1.7 + uFxT * 0.9) * 1.6 + uFxT * 0.7));
+          float c2 = abs(sin(cp.y * 2.3 + sin(cp.x * 1.3 - uFxT * 0.8) * 1.8 - uFxT * 0.6));
+          float caus = pow(1.0 - min(c1, c2), 6.0);
+          totalEmissiveRadiance += diffuseColor.rgb * caus * uw * uCaus * 2.5;
+        }
       `);
   };
   m.customProgramCacheKey = () => 'ground-v2';

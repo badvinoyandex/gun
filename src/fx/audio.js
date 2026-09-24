@@ -18,6 +18,7 @@ export function initAudio() {
   AUDIO.master = ctx.createGain(); AUDIO.master.gain.value = 0.8;
   const comp = ctx.createDynamicsCompressor(); comp.threshold.value = -10; comp.ratio.value = 6;
   AUDIO.master.connect(comp); comp.connect(ctx.destination);
+  AUDIO.comp = comp;
   // розовый шум для ветра и взрывов
   const len = ctx.sampleRate * 4;
   noiseBuf = ctx.createBuffer(1, len, ctx.sampleRate);
@@ -106,6 +107,30 @@ export function whistleSound(dur = 0.9) {
   o.type = 'sine'; o.frequency.setValueAtTime(1500 + Math.random() * 300, t); o.frequency.exponentialRampToValueAtTime(420, t + dur);
   g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.05, t + dur * 0.7); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
   o.connect(g); g.connect(AUDIO.master); o.start(t); o.stop(t + dur + 0.05);
+}
+/** Удар корпуса дрона о препятствие. */
+export function bump(k) {
+  if (!ready()) return;
+  const t = AUDIO.ctx.currentTime;
+  burst(t, { type: 'lowpass', f: 900, f1: 150, vol: clamp(k * 0.04, 0.05, 0.4), a: 0.002, dec: 0.15 });
+  burst(t, { type: 'bandpass', f: 2400, q: 3, vol: clamp(k * 0.02, 0.02, 0.2), a: 0.001, dec: 0.05 });
+}
+/** Всплеск: хлопок по воде и журчание. */
+export function splashSound(k = 1) {
+  if (!ready()) return;
+  const t = AUDIO.ctx.currentTime;
+  burst(t, { type: 'bandpass', f: 700, f1: 300, q: 0.8, vol: clamp(0.12 * k, 0.02, 0.35), a: 0.005, dec: 0.3 });
+  burst(t + 0.05, { type: 'highpass', f: 2500, vol: clamp(0.05 * k, 0.01, 0.15), a: 0.02, dec: 0.5, len: 5 });
+}
+let underF = null;
+/** Под водой звук глохнет: общий фильтр низких частот. */
+export function setUnderwater(on) {
+  if (!AUDIO.ctx) return;
+  if (!underF) {
+    underF = AUDIO.ctx.createBiquadFilter(); underF.type = 'lowpass'; underF.frequency.value = 20000;
+    AUDIO.master.disconnect(); AUDIO.master.connect(underF); underF.connect(AUDIO.comp);
+  }
+  underF.frequency.setTargetAtTime(on ? 380 : 20000, AUDIO.ctx.currentTime, 0.08);
 }
 /** Всплеск/чавканье шага по луже и грязи. */
 export function squelch(k) {
@@ -222,4 +247,61 @@ export function updateAudio(dt, s) {
     if (Math.random() < 0.5) setTimeout(() => boom(1800 + Math.random() * 2000, 2.0, Math.random() * 2 - 1), 900 + Math.random() * 1500);
     AUDIO.nextShell = AUDIO.t + 25 + Math.random() * 60;
   }
+}
+
+/* ---------- Звуки интерактива ---------- */
+/** Стая взлетает: хлопанье крыльев (пачки шума) и карканье. */
+export function flockSound(dist, x = 0, n = 10) {
+  if (!ready()) return;
+  const ctx = AUDIO.ctx, t = ctx.currentTime + dist / 343, v = clamp(1.2 / (1 + dist / 12), 0.02, 0.6);
+  for (let i = 0; i < 14 + n; i++) burst(t + i * 0.045 + Math.random() * 0.05, { type: 'bandpass', f: 300 + Math.random() * 500, q: 1.2, vol: v * (0.3 + Math.random() * 0.4), a: 0.004, dec: 0.05, x });
+  const caws = 2 + Math.floor(Math.random() * 4);
+  for (let k = 0; k < caws; k++) caw(ctx, t + 0.2 + k * (0.35 + Math.random() * 0.4), v * 0.7, x);
+}
+/** Карканье: хриплая пила с формантой ~1.1 кГц и спадом высоты. */
+function caw(ctx, t, v, x) {
+  const o = ctx.createOscillator(), f = ctx.createBiquadFilter(), g = ctx.createGain(), p = pan(ctx, x);
+  o.type = 'sawtooth';
+  const f0 = 520 + Math.random() * 160;
+  o.frequency.setValueAtTime(f0, t); o.frequency.linearRampToValueAtTime(f0 * 0.82, t + 0.28);
+  f.type = 'bandpass'; f.frequency.value = 1100 + Math.random() * 300; f.Q.value = 3;
+  env(g, t, 0.02, clamp(v, 0.01, 0.35), 0.26);
+  o.connect(f); f.connect(g); g.connect(p); p.connect(AUDIO.master); o.start(t); o.stop(t + 0.35);
+  burst(t, { type: 'highpass', f: 2500, vol: v * 0.25, a: 0.01, dec: 0.22, x });
+}
+/** Скрип петель: узкая полоса шума с плывущей частотой. */
+export function creakSound(dist, open = true) {
+  if (!ready()) return;
+  const t = AUDIO.ctx.currentTime, v = clamp(0.5 / (1 + dist / 6), 0.02, 0.3);
+  burst(t, { type: 'bandpass', f: open ? 700 : 1100, f1: open ? 1300 : 600, q: 18, vol: v, a: 0.05, dec: 0.45, len: 5 });
+  burst(t + 0.12, { type: 'bandpass', f: open ? 1500 : 900, f1: open ? 900 : 1400, q: 22, vol: v * 0.6, a: 0.04, dec: 0.3, len: 4 });
+  if (!open) burst(t + 0.42, { type: 'lowpass', f: 380, f1: 90, vol: v * 1.6, a: 0.003, dec: 0.18 });
+}
+/** Щелчок ножниц по проволоке и звон отпущенной нити. */
+export function wireSnap(dist) {
+  if (!ready()) return;
+  const ctx = AUDIO.ctx, t = ctx.currentTime, v = clamp(0.6 / (1 + dist / 5), 0.02, 0.4);
+  burst(t, { type: 'highpass', f: 3500, vol: v, a: 0.001, dec: 0.04 });
+  const o = ctx.createOscillator(), g = ctx.createGain();
+  o.type = 'triangle'; o.frequency.setValueAtTime(1900, t); o.frequency.exponentialRampToValueAtTime(700, t + 0.5);
+  env(g, t, 0.002, v * 0.3, 0.55); o.connect(g); g.connect(AUDIO.master); o.start(t); o.stop(t + 0.6);
+}
+/** Замыкание и искры: треск разрядов, гул трансформатора обрывается. */
+export function sparkSound(dist, big = 1) {
+  if (!ready()) return;
+  const t = AUDIO.ctx.currentTime + dist / 343, v = clamp(big * 0.9 / (1 + dist / 10), 0.02, 0.6);
+  for (let i = 0; i < 6 + big * 8; i++) burst(t + Math.random() * 0.5 * big, { type: 'highpass', f: 2000 + Math.random() * 4000, vol: v * Math.random(), a: 0.001, dec: 0.03 });
+  const o = AUDIO.ctx.createOscillator(), g = AUDIO.ctx.createGain();
+  o.type = 'sawtooth'; o.frequency.setValueAtTime(100, t); o.frequency.exponentialRampToValueAtTime(30, t + 0.8);
+  env(g, t, 0.01, v * 0.25, 0.8); o.connect(g); g.connect(AUDIO.master); o.start(t); o.stop(t + 1);
+}
+/** Шипение струи из пробитого бака. */
+export function hissSound(dist) {
+  if (!ready()) return;
+  burst(AUDIO.ctx.currentTime, { type: 'highpass', f: 1800, vol: clamp(0.4 / (1 + dist / 8), 0.01, 0.2), a: 0.05, dec: 1.2, len: 12 });
+}
+/** Лязг ступеней и перекладин под ногами. */
+export function clang(k = 1) {
+  if (!ready()) return;
+  burst(AUDIO.ctx.currentTime, { type: 'bandpass', f: 900 + Math.random() * 700, q: 6, vol: 0.05 * k, a: 0.002, dec: 0.12 });
 }
