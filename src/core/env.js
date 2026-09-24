@@ -9,7 +9,7 @@ export const PRESETS = {
     name: 'минимальное', shadow: 512, grass: 4000, grassR: 18, trees: 0.6, treeNearR: 28,
     bloom: false, smaa: false, pixel: 0.75, refl: 0, cloth: 6, lights: 1, spotShadows: 0, lampPoints: 1, fireLights: 1, tex: 0.35,
     ferns: 0.35, dust: 300, shadowTrees: false, tufts: false, shadowEvery: 3, rain: 0.35, softShadow: false, aniso: 2,
-    bodies: 45, physStep: 1 / 40, physSub: 2, fx: 0.5, pool: 360, floraR: 40, flora: 0.4, clothR: 45, minPr: 0.5, groundNormals: false
+    bodies: 45, physStep: 1 / 40, physSub: 2, fx: 0.5, pool: 360, floraR: 30, flora: 0.25, clothR: 45, minPr: 0.5, groundNormals: false
   },
   low: {
     name: 'низкое', shadow: 1024, grass: 9000, grassR: 24, trees: 0.72, treeNearR: 42,
