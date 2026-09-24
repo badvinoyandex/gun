@@ -100,6 +100,8 @@ export function uvBox(g, sx, sy, sz, tile = 1.5, vertical = false) {
 /** Бокс с поворотом, UV в метрах и, по желанию, коллайдером. */
 export function box(mat, x, y, z, sx, sy, sz, o = {}) {
   const g = uvBox(new THREE.BoxGeometry(sx, sy, sz), sx, sy, sz, o.tile ?? 1.5, o.vertical);
+  // сдвиг UV: куски одной стены продолжают рисунок досок, а не начинают его заново
+  if (o.uvOff) { const uv = g.attributes.uv, t = o.tile ?? 1.5, du = o.uvOff[0] / t, dv = o.uvOff[1] / t; for (let i = 16; i < 24; i++) uv.setXY(i, uv.getX(i) + (o.vertical ? dv : du), uv.getY(i) + (o.vertical ? du : dv)); }
   const ry = o.rot ?? 0;
   place(mat, g, x, y, z, [o.rx ?? 0, ry, o.rz ?? 0], 1, o);
   if (o.collide) addBox(x, y, z, sx, sy, sz, ry, { walk: o.walk !== false });

@@ -50,7 +50,7 @@ export function house(o) {
   const P = (lx, lz) => F.p(lx, lz);
   const B = (mat, lx, ly, lz, sx, sy, sz, extra = {}) => {
     const [x, z] = P(lx, lz);
-    box(mat, x, ly, z, sx, sy, sz, { rot: o.rot + (extra.r ?? 0), rx: extra.rx, rz: extra.rz, tile: extra.tile ?? tile, collide: extra.collide, walk: extra.walk, vertical: extra.vertical });
+    box(mat, x, ly, z, sx, sy, sz, { rot: o.rot + (extra.r ?? 0), rx: extra.rx, rz: extra.rz, tile: extra.tile ?? tile, collide: extra.collide, walk: extra.walk, vertical: extra.vertical, uvOff: extra.uvOff });
   };
   const S = beginStruct({ kind: 'house', name: o.id, x: o.x, z: o.z, rot: o.rot, w, d, h, fy, fuel: o.style === 'log' ? 1.4 : 1, log: o.style === 'log' });
   noPanel();
@@ -77,14 +77,28 @@ export function house(o) {
   const walls = [], bySide = {};
   for (const [name, S2] of Object.entries(sides)) {
     bySide[name] = [];
+    // куски стены между проёмами режутся на секции ~1.3 м и на два яруса: взрыв выбивает
+    // дыру в стене, а не всю стену; верхний ярус без опоры под собой падает следом
+    const pieces = [];
     for (const [u0, u1, y0, y1] of wallPieces(S2.len, h, openings[name])) {
+      const nu = Math.max(1, Math.round((u1 - u0) / 1.3));
+      let ys = [y0, y1];
+      if (y1 - y0 > 1.5) { let m = (y0 + y1) / 2; if (o.style === 'log') m = Math.round(m / 0.225) * 0.225; ys = [y0, m, y1]; }
+      for (let a = 0; a < nu; a++) {
+        const a0 = u0 + (u1 - u0) * a / nu, a1 = u0 + (u1 - u0) * (a + 1) / nu;
+        let below = null;
+        for (let r = 0; r < ys.length - 1; r++) { const pc = [a0, a1, ys[r], ys[r + 1], below]; pieces.push(pc); below = pc; }
+      }
+    }
+    for (const pc of pieces) {
+      const [u0, u1, y0, y1, below] = pc;
       const uc = (u0 + u1) / 2 - S2.len / 2;
       const lx = S2.c[0] + S2.axis[0] * uc, lz = S2.c[1] + S2.axis[1] * uc;
       const [wx, wz] = P(lx, lz);
-      const pn = panel('wall', { hp: o.style === 'log' ? 1.7 : 1.0, load: true, mat: wallMat,
+      const pn = panel('wall', { hp: o.style === 'log' ? 1.7 : 1.0, load: true, mat: wallMat, sup: below ? { list: [below.pn], frac: 0.99 } : null,
         dims: { x: wx, y: fy + (y0 + y1) / 2, z: wz, sx: u1 - u0, sy: y1 - y0, sz: WALL_T, rot: o.rot + S2.r, log: o.style === 'log' } });
-      pn.u0 = u0; pn.u1 = u1; pn.y0 = y0; pn.y1 = y1;
-      B(wallMat, lx, fy + (y0 + y1) / 2, lz, u1 - u0, y1 - y0, WALL_T, { r: S2.r, collide: true, walk: false });
+      pn.u0 = u0; pn.u1 = u1; pn.y0 = y0; pn.y1 = y1; pc.pn = pn;
+      B(wallMat, lx, fy + (y0 + y1) / 2, lz, u1 - u0, y1 - y0, WALL_T, { r: S2.r, collide: true, walk: false, uvOff: [u0, y0] });
       walls.push(pn); bySide[name].push(pn);
     }
     // оформление проёмов: держится на соседних кусках стены
@@ -101,6 +115,21 @@ export function house(o) {
       if (op.win) {
         B(trimMat, lx + nOut[0] * 0.12, fy + op.y0 - 0.03, lz + nOut[1] * 0.12, fw + 0.2, 0.06, 0.12, { r: S2.r, tile: 1 });
         const state = R();
+        // ставни: распахнуты под разными углами, одна может висеть на петле
+        if (o.style !== 'camp' && state >= 0.28 && R() < 0.55) {
+          for (const e of [-1, 1]) {
+            if (R() < 0.18) continue;
+            const hang = R() < 0.2;
+            const [hx, hz] = P(lx + ax * e * (fw / 2 + 0.06) + nOut[0] * 0.14, lz + az * e * (fw / 2 + 0.06) + nOut[1] * 0.14);
+            const [ox, oz] = P(nOut[0], nOut[1]), nx0 = ox - o.x, nz0 = oz - o.z;
+            const base = o.rot + S2.r, sw = fw / 2, amt = R.range(0.4, 1.4);
+            // знак поворота выбираем так, чтобы свободный край уходил наружу, а не в стену
+            const endAt = sg => { const a = base + sg * amt; return [e * Math.cos(a), -e * Math.sin(a)]; };
+            const [ex1, ez1] = endAt(1), sg = ex1 * nx0 + ez1 * nz0 > 0 ? 1 : -1;
+            const ang = base + sg * amt, c = Math.cos(ang), s3 = Math.sin(ang);
+            box(o.style === 'log' ? M.planksPaint : trimMat, hx + c * e * sw / 2, cy - (hang ? 0.15 : 0), hz - s3 * e * sw / 2, sw, fh * 0.98, 0.035, { rot: ang, rz: hang ? e * 0.3 : 0, tile: 1, vertical: true });
+          }
+        }
         if (state < 0.28) {
           // заколочено крест-накрест
           const [x, z] = P(lx + nOut[0] * 0.14, lz + nOut[1] * 0.14);
@@ -145,11 +174,23 @@ export function house(o) {
       }
     }
   }
+  const edge = (name, atStart) => bySide[name].filter(q => atStart ? q.u0 < 0.05 : q.u1 > sides[name].len - 0.05);
+  const corners = { '-1,1': [...edge('front', true), ...edge('left', true)], '1,1': [...edge('front', false), ...edge('right', true)], '-1,-1': [...edge('back', true), ...edge('left', false)], '1,-1': [...edge('back', false), ...edge('right', false)] };
+  // дощатые дома: угловые доски и нижний отлив — держатся на своих углах
+  if (o.style !== 'log') {
+    for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+      panel('trim', { hp: 0.6, sup: { list: corners[sx + ',' + sz], frac: 0.5 }, density: 450 });
+      B(trimMat, sx * (w / 2 + 0.015), fy + h / 2, sz * (d / 2 - 0.06), 0.05, h + 0.05, 0.14, { tile: 1, vertical: true });
+      B(trimMat, sx * (w / 2 - 0.06), fy + h / 2, sz * (d / 2 + 0.015), 0.14, h + 0.05, 0.05, { tile: 1, vertical: true });
+    }
+    for (const [name, sgn] of [['front', 1], ['back', -1]]) {
+      panel('trim', { hp: 0.5, sup: { list: bySide[name].filter(q => q.y0 < 0.05), frac: 0.5 }, density: 450 });
+      B(trimMat, 0, fy + 0.06, sgn * (d / 2 + 0.03), w + 0.04, 0.12, 0.05, { tile: 1 });
+    }
+  }
   // углы сруба: выпуски брёвен держатся на крайних кусках двух стен
   if (o.style === 'log') {
     const stub = new THREE.CylinderGeometry(0.12, 0.12, 0.62, 7);
-    const edge = (name, atStart) => bySide[name].filter(q => atStart ? q.u0 < 0.05 : q.u1 > sides[name].len - 0.05);
-    const corners = { '-1,1': [...edge('front', true), ...edge('left', true)], '1,1': [...edge('front', false), ...edge('right', true)], '-1,-1': [...edge('back', true), ...edge('left', false)], '1,-1': [...edge('back', false), ...edge('right', false)] };
     for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
       panel('trim', { hp: 1.2, sup: { list: corners[sx + ',' + sz], frac: 0.99 }, density: 500 });
       for (let y = 0.1; y < h; y += 0.225) {
@@ -185,6 +226,12 @@ export function house(o) {
   }
   panel('roof', { hp: 1, sup: roofSup, density: 500 });
   B(M.planksDark, 0, top + hr - 0.02, 0, w + 0.8, 0.14, 0.14, { tile: 1 });
+  // лобовые доски по свесам кровли и ветровые по фронтонам
+  for (const s2 of [-1, 1]) {
+    panel('roof', { hp: 0.6, sup: roofSup, density: 450 });
+    B(trimMat, 0, top + hr - D2 * Math.tan(pitch) - 0.07, s2 * (D2 - 0.02), w + 0.84, 0.16, 0.035, { tile: 1 });
+    for (const e of [-1, 1]) B(trimMat, e * (w / 2 + 0.42), top + hr - (D2 / 2) * Math.tan(pitch) - 0.03, s2 * D2 / 2, 0.035, 0.16, Ls, { rx: s2 * pitch, tile: 1 });
+  }
   // кровля для коллизий: ступенчатый «конёк» из боксов (без геометрии), падает вместе с кровлей
   panel('roofcol', { mode: 'none', sup: roofSup });
   for (let k = 0; k < 4; k++) {
@@ -210,9 +257,15 @@ export function house(o) {
     const sx = o.stove[0], sz = o.stove[1];
     B(M.brick, sx, fy + 0.5, sz, 1.0, 1.0, 1.1, { collide: true, tile: 0.6 });
     B(M.brick, sx, fy + 1.6, sz - 0.2, 0.5, 1.2, 0.5, { tile: 0.6 });
-    B(M.brick, sx, top + hr * 0.6, sz - 0.2, 0.42, hr * 1.6 + 0.6, 0.42, { tile: 0.6 });
+    // труба над кровлей — отдельная деталь: прямое попадание сбивает её, пожар — нет
+    B(M.brick, sx, (fy + 2.2 + top) / 2, sz - 0.2, 0.42, top - fy - 2.2 + 0.02, 0.42, { tile: 0.6 });
     const [cx, cz] = P(sx, sz - 0.2);
-    addBox(cx, (fy + 1 + top + hr * 1.4 + 0.3) / 2, cz, 0.5, top + hr * 1.4 + 0.3 - fy - 1, 0.5, o.rot);
+    addBox(cx, (fy + 1 + top) / 2, cz, 0.5, top - fy - 1, 0.5, o.rot);
+    panel('prop', { hp: 2.4, mode: 'rigid', density: 1800, float: 0, burnable: false });
+    B(M.brick, sx, top + (hr * 1.4 + 0.3) / 2, sz - 0.2, 0.42, hr * 1.4 + 0.3, 0.42, { tile: 0.6 });
+    B(M.concrete, sx, top + hr * 1.4 + 0.34, sz - 0.2, 0.54, 0.08, 0.54, { tile: 0.6 });
+    addBox(cx, top + (hr * 1.4 + 0.3) / 2, cz, 0.5, hr * 1.4 + 0.3, 0.5, o.rot);
+    noPanel();
   }
   // обстановка
   if (o.interior !== false) (o.furnish ?? furnish)(o, R, F, fy, B);

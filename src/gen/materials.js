@@ -99,6 +99,8 @@ export function buildMaterials() {
   TEX.glow = TX.radial([[0, 'rgba(255,236,200,1)'], [0.18, 'rgba(255,200,130,.55)'], [0.5, 'rgba(255,170,90,.12)'], [1, 'rgba(255,160,80,0)']]);
   TEX.pool = TX.radial([[0, 'rgba(255,255,255,1)'], [0.35, 'rgba(255,255,255,.55)'], [0.7, 'rgba(255,255,255,.14)'], [1, 'rgba(255,255,255,0)']], 256);
   TEX.smoke = TX.smokeTex();
+  TEX.smokeAtlas = TX.smokeAtlas();
+  TEX.fireAtlas = TX.fireAtlas();
   TEX.fire = TX.radial([[0, 'rgba(255,250,220,1)'], [0.25, 'rgba(255,190,90,.9)'], [0.6, 'rgba(220,80,20,.35)'], [1, 'rgba(120,20,0,0)']]);
   TEX.crater = TX.craterTex();
   TEX.water = TX.waterNormals();

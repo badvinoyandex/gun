@@ -11,6 +11,7 @@ import { woodCrack } from './audio.js';
 import { BURN, charData, markCharDirty } from '../core/fxu.js';
 import { ignite, heatAt, FIRE, attachFire } from './fire.js';
 import { WEATHER } from '../world/weather.js';
+import { injectStructFX } from '../world/wind.js';
 
 /* ============================================================================
    РАЗРУШЕНИЕ И ПОЖАР ПОСТРОЕК
@@ -27,7 +28,7 @@ import { WEATHER } from '../world/weather.js';
    Работа разбита по кадрам: не больше нескольких разрушений за кадр.
 ============================================================================ */
 const QUEUE = [];
-const BUDGET = () => Math.round((18 + 50 * Q.tex) * (1 - PERF.load * 0.6));   // тел обломков на один взрыв; при просадке кадра — меньше
+const BUDGET = () => Math.round(Q.bodies * 0.38 * (1 - PERF.load * 0.6));   // тел обломков на один взрыв; при просадке кадра — меньше
 let bodiesThisBlast = 0;
 const _v = new THREE.Vector3(), _q = new THREE.Quaternion(), _up = new THREE.Vector3(0, 1, 0);
 const LOG_GEO = new THREE.CylinderGeometry(0.11, 0.11, 1, 7).rotateZ(Math.PI / 2);
@@ -153,7 +154,7 @@ function shatter(p, dir, force, fire, canBody) {
       for (let q = 0; q < cut; q++) pieces.push({ x: D.x + ux * t, y: D.y - D.sy / 2 + (q + 0.5) * D.sy / cut, z: D.z + uz * t, L: D.sy / cut * sr(0.7, 1), log: false, w: D.sx / n });
     }
   }
-  const maxBodies = Math.min(pieces.length, Math.round(4 + 8 * Q.tex));
+  const maxBodies = Math.min(pieces.length, Math.round(3 + Q.bodies / 18));
   pieces.sort(() => Math.random() - 0.5);
   pieces.forEach((pc, i) => {
     if (i >= maxBodies || !canBody || bodiesThisBlast >= BUDGET()) {
@@ -179,7 +180,7 @@ function shatter(p, dir, force, fire, canBody) {
       vel: dir.clone().multiplyScalar(force * sr(0.3, 1.1)).add(new THREE.Vector3(sr(-1, 1), sr(0, 2) * Math.min(1, force / 4), sr(-1, 1))),
       ang: new THREE.Vector3(sr(-3, 3), sr(-3, 3), sr(-3, 3)), life: sr(35, 60), friction: 0.9, restitution: 0.05, damp: [0.1, 0.35], float: 1.7, rad: 0.1, ccd: 0.08,
       onDone: () => { scene.remove(mesh); if (!pc.log) mesh.geometry.dispose(); },
-      sync: (q, r, f) => { mesh.position.copy(q); mesh.quaternion.copy(r); mesh.scale.copy(sc).multiplyScalar(Math.max(0.01, f)); } });
+      sync: (q, r, f) => { mesh.position.copy(q); mesh.quaternion.copy(r); mesh.scale.copy(sc).multiplyScalar(clamp(f, 0.01, 1)); } });
     if (!b) { scene.remove(mesh); return; }
     bodiesThisBlast++;
     if (fire && Math.random() < 0.3) attachFire(b, sr(5, 10));
@@ -243,6 +244,10 @@ function updateBurning(dt) {
       s.fuel -= st * s.burn * 0.009;
       s.burnT += st;
       if (s.fuel <= 0 || s.burn <= 0.01 || !alive.length) {
+        // догорело: пепелище ещё долго тлеет — дымок, угли, редкие искры
+        if (s.burnT > 20 && WEATHER.rain < 0.5) { s.smolder = sr(70, 130); s.smolder0 = s.smolder; if (!SMOLDER.includes(s)) SMOLDER.push(s); }
+        s.charred = 1;
+        if (s.kind === 'house' || s.kind === 'shed' || s.kind === 'porch') charPile(s);
         s.burn = 0; BURNING.splice(i, 1);
         for (const p of s.panels) if (p.box) forFootprint(p, (x, z) => charCell(x, z, 0.1, 0));
         markCharDirty();
@@ -270,10 +275,23 @@ function updateBurning(dt) {
       if (!alive.length || Math.random() > s.burn) continue;
       const p = alive[(Math.random() * alive.length) | 0], b = p.box;
       const x = sr(b.min.x, b.max.x), y = sr(b.min.y, b.max.y), z = sr(b.min.z, b.max.z);
-      FX.add.spawn({ x, y, z, vx: sr(-0.3, 0.3), vy: sr(1.5, 3.5), vz: sr(-0.3, 0.3), size: sr(0.5, 1.2) * (0.6 + s.burn), grow: -0.3, life: sr(0.4, 0.9), col: [1.8, 0.85, 0.32], a: 0.9, cool: 0.4, windK: 0.9 });
+      FX.add.spawn({ flame: true, x, y, z, vx: sr(-0.3, 0.3), vy: sr(1.5, 3.5), vz: sr(-0.3, 0.3), size: sr(0.5, 1.2) * (0.6 + s.burn), grow: -0.3, life: sr(0.4, 0.9), col: [1.8, 0.85, 0.32], a: 0.9, cool: 0.4, windK: 0.9 });
     }
+    // столб дыма: снизу подсвечен пламенем, чем сильнее огонь — тем чернее и гуще
     if (Math.random() < dt * (3 + s.burn * 10)) FX.alpha.spawn({ x: s.center.x + sr(-1, 1), y: s.fy + (s.h ?? 2.5) + sr(0, 1.5), z: s.center.z + sr(-1, 1), vx: 0, vy: sr(1.2, 2.5), vz: 0,
-      size: sr(1.5, 3) * (0.6 + s.burn), grow: 1.6, life: sr(6, 12), col: [0.1, 0.095, 0.09], a: 0.45, fadeIn: 0.6, windK: 2.2, drag: 0.25 });
+      size: sr(1.5, 3) * (0.6 + s.burn), grow: 1.6, life: sr(6, 12), col: [0.1, 0.095, 0.09].map(v => v * (1.4 - s.burn * 0.6)), a: 0.45 + s.burn * 0.15, fadeIn: 0.6, windK: 2.2, drag: 0.25, glow: 0.35 * s.burn });
+    // кровля провалилась: огонь вырывается столбом над срубом
+    const roofGone = s.panels.some(p => p.kind === 'roof' && p.dead);
+    if (roofGone && s.burn > 0.35) for (let k = 0; k < 2; k++) if (Math.random() < s.burn) {
+      const w2 = (s.w ?? 3) * 0.35, d2b = (s.d ?? 3) * 0.35, c = Math.cos(s.rot || 0), sn = Math.sin(s.rot || 0), lx = sr(-w2, w2), lz = sr(-d2b, d2b);
+      FX.add.spawn({ flame: true, x: s.x + lx * c + lz * sn, y: s.fy + (s.h ?? 2.5) * sr(0.5, 1), z: s.z - lx * sn + lz * c, vx: sr(-0.3, 0.3), vy: sr(2.5, 4.5), vz: sr(-0.3, 0.3),
+        size: sr(1.2, 2.2) * (0.5 + s.burn), grow: -0.4, life: sr(0.5, 1.0), col: [1.7, 0.8, 0.3], a: 0.85, cool: 0.4, windK: 1.0 });
+    }
+    // тлеющие стены: угли и струйки дыма вдоль уже почерневших панелей
+    if (alive.length && Math.random() < dt * 6 * s.burn) {
+      const p = alive[(Math.random() * alive.length) | 0], b = p.box;
+      FX.alpha.spawn({ x: sr(b.min.x, b.max.x), y: sr(b.min.y, b.max.y), z: sr(b.min.z, b.max.z), vx: 0, vy: sr(0.4, 0.9), vz: 0, size: sr(0.3, 0.6), grow: 0.8, life: sr(2, 4), col: [0.18, 0.17, 0.16], a: 0.3, fadeIn: 0.3, windK: 1.2, drag: 0.4, glow: 0.2 });
+    }
     if (Math.random() < dt * s.burn * 4) FX.add.spawn({ x: s.center.x + sr(-2, 2), y: s.fy + sr(1, 3), z: s.center.z + sr(-2, 2), vx: sr(-0.6, 0.6), vy: sr(2, 5), vz: sr(-0.6, 0.6), size: 0.06, life: sr(1.5, 3), col: [2.6, 1.2, 0.4], a: 1, grav: 1, windK: 1.2, drag: 0.35 });
   }
 }
@@ -293,12 +311,71 @@ function grassToStruct() {
     }
   }
 }
-let gT = 0;
+/** Обугленные балки и доски на полу пепелища: один инстанс-меш на всю карту. */
+let PILE = null;
+function charPile(s) {
+  if (!PILE) {
+    const mat = new THREE.MeshStandardMaterial({ color: 0x17120f, roughness: 1, metalness: 0 });
+    injectStructFX(mat);
+    PILE = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), mat, 400);
+    PILE.count = 0; PILE.castShadow = true; PILE.receiveShadow = true; PILE.frustumCulled = false;
+    scene.add(PILE);
+  }
+  const n = Math.round(6 + (s.w ?? 3) * (s.d ?? 3) * 0.35), c = Math.cos(s.rot || 0), sn = Math.sin(s.rot || 0);
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), p = new THREE.Vector3(), sc = new THREE.Vector3();
+  for (let k = 0; k < n && PILE.count < 400; k++) {
+    const lx = sr(-0.42, 0.42) * (s.w ?? 3), lz = sr(-0.42, 0.42) * (s.d ?? 3), L = sr(0.8, 2.6), log = s.log || Math.random() < 0.3;
+    const x = s.x + lx * c + lz * sn, z = s.z - lx * sn + lz * c;
+    e.set(sr(-0.25, 0.25), Math.random() * TAU, sr(-0.35, 0.35) * (k % 3 === 0 ? 1.6 : 1));
+    sc.set(L, log ? 0.2 : 0.06, log ? 0.2 : sr(0.12, 0.2));
+    p.set(x, (s.fy ?? hFast(x, z)) + sc.y / 2 + Math.random() * 0.12, z);
+    PILE.setMatrixAt(PILE.count++, m.compose(p, q.setFromEuler(e), sc));
+  }
+  PILE.instanceMatrix.needsUpdate = true;
+}
+/* ---------- Пепелище ----------
+   Догоревший дом тлеет ещё минуту-другую: над остовом тянется тонкий дым,
+   в углях вспыхивают искры, жар на карте обугливания медленно гаснет. Дождь тушит. */
+const SMOLDER = [];
+function updateSmolder(dt, step) {
+  const cp = camera.position;
+  for (let i = SMOLDER.length - 1; i >= 0; i--) {
+    const s = SMOLDER[i];
+    s.smolder -= dt * (1 + WEATHER.rain * 6);
+    if (s.smolder <= 0 || s.burn > 0) { SMOLDER.splice(i, 1); continue; }
+    const k = s.smolder / s.smolder0;
+    if (step) {
+      for (const p of s.panels) if (p.box && Math.random() < 0.25) forFootprint(p, (x, z) => charCell(x, z, 0, k * sr(0.15, 0.5)));
+      markCharDirty();
+    }
+    if ((s.x - cp.x) ** 2 + (s.z - cp.z) ** 2 > 140 * 140) continue;
+    const w2 = (s.w ?? 3) * 0.45, d2 = (s.d ?? 3) * 0.45, c = Math.cos(s.rot || 0), sn = Math.sin(s.rot || 0);
+    const at = () => { const lx = sr(-w2, w2), lz = sr(-d2, d2); return [s.x + lx * c + lz * sn, s.z - lx * sn + lz * c]; };
+    if (Math.random() < dt * 5 * k) {
+      const [x, z] = at();
+      FX.alpha.spawn({ x, y: s.fy + 0.2, z, vx: 0, vy: sr(0.5, 1.1), vz: 0, size: sr(0.4, 0.9), grow: 0.9, life: sr(4, 8), col: [0.3, 0.29, 0.28], a: 0.22 * (0.4 + k), fadeIn: 0.8, windK: 1.6, drag: 0.3, glow: 0.12 * k });
+    }
+    if (Math.random() < dt * 2.5 * k) {
+      const [x, z] = at();
+      FX.add.spawn({ x, y: s.fy + 0.1, z, vx: sr(-0.4, 0.4), vy: sr(1, 2.5), vz: sr(-0.4, 0.4), size: 0.05, life: sr(0.8, 1.6), col: [2.6, 1.1, 0.35], a: 1, grav: 1, windK: 0.9, drag: 0.4 });
+    }
+    // язычки пламени в углях — первые полминуты
+    if (k > 0.65 && Math.random() < dt * 3 * (k - 0.5)) {
+      const [x, z] = at();
+      FX.add.spawn({ flame: true, x, y: s.fy + 0.05, z, vx: 0, vy: sr(0.4, 0.9), vz: 0, size: sr(0.25, 0.5), grow: -0.2, life: sr(0.4, 0.8), col: [1.7, 0.75, 0.28], a: 0.8, cool: 0.4, windK: 0.5 });
+    }
+    FIRE.structs.push({ x: s.center.x, z: s.center.z, y: s.fy + 0.4, p: k * 1.5 });
+  }
+}
+let gT = 0, sT = 0;
 export function updateStructs(dt) {
   processQueue();
   updateBurning(dt);
+  sT += dt;
+  updateSmolder(dt, sT > 0.5);
+  if (sT > 0.5) sT = 0;
   gT += dt;
   if (gT > 1) { gT = 0; if (FIRE.cells > 0) grassToStruct(); }
 }
-export const structStats = () => ({ structs: STRUCTS.length, burning: BURNING.length, broken: STRUCTS.reduce((a, s) => a + s.panels.filter(p => p.dead).length, 0) });
+export const structStats = () => ({ structs: STRUCTS.length, burning: BURNING.length, smolder: SMOLDER.length, broken: STRUCTS.reduce((a, s) => a + s.panels.filter(p => p.dead).length, 0) });
 export const structAt = (x, z, r = 2) => STRUCTS.filter(s => s.center && Math.hypot(s.center.x - x, s.center.z - z) < s.radius + r);

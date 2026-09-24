@@ -657,6 +657,60 @@ export function smokeTex() {
   }
   const t = tex(c); t.wrapS = t.wrapT = 1001; return t;
 }
+/** Атлас огня 2×2: [0] огненный шар, [1], [2] языки пламени, [3] искра.
+    Языки — капли, вытянутые вверх, с отростками; цвет от белого ядра к красной кайме. */
+export function fireAtlas() {
+  const S = 256, H = S / 2, [c, x] = cv(S);
+  const cell = (i, fn) => { x.save(); x.translate((i % 2) * H, (i >> 1) * H); x.beginPath(); x.rect(0, 0, H, H); x.clip(); fn(); x.restore(); };
+  const grad = (cx, cy, r) => {
+    const g = x.createRadialGradient(cx, cy, 0, cx, cy, r);
+    g.addColorStop(0, 'rgba(255,250,228,1)'); g.addColorStop(0.3, 'rgba(255,200,100,.92)');
+    g.addColorStop(0.65, 'rgba(230,92,24,.45)'); g.addColorStop(1, 'rgba(130,24,0,0)');
+    return g;
+  };
+  cell(0, () => { x.fillStyle = grad(64, 64, 60); x.fillRect(0, 0, H, H); });
+  const tongue = (cx, base, w, h, lean) => {
+    // капля: широкое основание, острый изогнутый кончик
+    x.beginPath();
+    x.moveTo(cx - w, base);
+    x.bezierCurveTo(cx - w * 1.1, base - h * 0.45, cx + lean * 0.5 - w * 0.3, base - h * 0.75, cx + lean, base - h);
+    x.bezierCurveTo(cx + lean * 0.5 + w * 0.4, base - h * 0.7, cx + w * 1.1, base - h * 0.4, cx + w, base);
+    x.closePath(); x.fill();
+  };
+  for (const i of [1, 2]) cell(i, () => {
+    x.filter = 'blur(5px)';
+    const R = i === 1 ? [0.2, -0.3, 0.5] : [-0.4, 0.35, -0.1];
+    x.fillStyle = grad(64, 100, 70);
+    tongue(64, 118, 30, 96, R[0] * 20);
+    x.fillStyle = grad(64, 104, 52);
+    tongue(44, 116, 14, 66 + R[1] * 20, R[1] * 22);
+    tongue(84, 116, 14, 62 - R[2] * 18, R[2] * 26);
+    x.globalCompositeOperation = 'lighter';
+    x.fillStyle = 'rgba(255,245,210,.55)';
+    tongue(64, 116, 14, 46, R[0] * 8);
+    x.globalCompositeOperation = 'source-over';
+    x.filter = 'none';
+  });
+  cell(3, () => { const g = x.createRadialGradient(64, 64, 0, 64, 64, 24); g.addColorStop(0, 'rgba(255,255,240,1)'); g.addColorStop(0.4, 'rgba(255,210,140,.8)'); g.addColorStop(1, 'rgba(255,140,40,0)'); x.fillStyle = g; x.fillRect(0, 0, H, H); });
+  const t = tex(c); t.wrapS = t.wrapT = 1001; return t;
+}
+/** Атлас дыма 2×2: четыре разных клуба. Сверху светлее, снизу темнее —
+    клуб читается объёмом, а не плоским пятном. */
+export function smokeAtlas() {
+  const S = 256, H = S / 2, [c, x] = cv(S);
+  for (let i = 0; i < 4; i++) {
+    const ox = (i % 2) * H, oy = (i >> 1) * H;
+    x.save(); x.beginPath(); x.rect(ox, oy, H, H); x.clip();
+    for (let k = 0; k < 34; k++) {
+      const a = sr(0, TAU), r = Math.sqrt(srnd()) * 30, px = 64 + Math.cos(a) * r, py = 64 + Math.sin(a) * r * 0.85;
+      const light = clamp(0.62 + (64 - py) / 90 + (64 - px) / 260, 0.35, 1);
+      const v = 150 + 105 * light;
+      blob(x, ox + px, oy + py, sr(12, 30), [v, v, v * 0.98], sr(0.1, 0.24));
+    }
+    x.restore();
+  }
+  const t = tex(c); t.wrapS = t.wrapT = 1001; return t;
+}
 /** Воронка: выжженный центр, выброс грунта лучами. */
 export function craterTex() {
   const S = 256, [c, x] = cv(S);

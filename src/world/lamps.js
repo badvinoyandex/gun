@@ -278,18 +278,21 @@ export function finishLamps() {
   // пул реальных источников
   for (let i = 0; i < Q.lights; i++) {
     const sp = new THREE.SpotLight(0xffc98a, 0, 24, 1.05, 0.65, 1.6);
-    sp.castShadow = i < (Q.lights >= 6 ? 2 : 1);
-    if (sp.castShadow) { sp.shadow.mapSize.set(512, 512); sp.shadow.bias = -0.0008; sp.shadow.camera.near = 0.3; sp.shadow.camera.far = 30; }
+    sp.castShadow = i < Q.spotShadows;
+    // карта тени перерисовывается, только пока фонарь горит (днём спот стоит под землёй)
+    if (sp.castShadow) { sp.shadow.mapSize.set(512, 512); sp.shadow.bias = -0.0008; sp.shadow.camera.near = 0.3; sp.shadow.camera.far = 30; sp.shadow.autoUpdate = false; }
     sp.position.set(0, -500, 0); sp.target.position.set(0, -501, 0);
     scene.add(sp, sp.target);
     SPOTS.push(sp);
   }
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < Q.lampPoints; i++) {
     const pl = new THREE.PointLight(0xffa860, 0, 10, 1.8);
     pl.position.set(0, -500, 0); scene.add(pl); POINTS.push(pl);
   }
 }
 
+const SPOT_C = [], PT_C = [], DOWN = new THREE.Vector3(0, -1, 0);
+const byRank = (a, b) => a.rank - b.rank;
 /** Каждый кадр: включение по сумеркам, мигание, распределение пула. */
 export function updateLamps(lampOn) {
   if (!glowIM) return;
@@ -325,12 +328,15 @@ export function updateLamps(lampOn) {
   }
   aI.needsUpdate = true; cI.needsUpdate = true;
   // пул: прожекторы и фонари — спот-светом, окна и огонь — точечным
-  const spotC = LAMPS.filter(L => L.rank < 1e12 && (L.kind === 'post' || L.kind === 'flood')).sort((a, b) => a.rank - b.rank);
+  SPOT_C.length = 0; PT_C.length = 0;
+  for (const L of LAMPS) if (L.rank < 1e12) (L.kind === 'post' || L.kind === 'flood' ? SPOT_C : PT_C).push(L);
+  const spotC = SPOT_C.sort(byRank);
   SPOTS.forEach((S, i) => {
     const L = spotC[i];
-    if (!L || L.rank > 140 * 140) { S.intensity = 0; S.position.set(0, -500, 0); return; }
+    if (!L || L.rank > 140 * 140) { S.intensity = 0; S.position.set(0, -500, 0); if (S.castShadow) S.shadow.needsUpdate = false; return; }
+    if (S.castShadow) S.shadow.needsUpdate = true;
     S.position.copy(L.pos);
-    const dir = L.dir || new THREE.Vector3(0, -1, 0);
+    const dir = L.dir || DOWN;
     S.target.position.copy(L.pos).addScaledVector(dir, 5);
     S.target.updateMatrixWorld();
     S.color.copy(L.color);
@@ -339,7 +345,7 @@ export function updateLamps(lampOn) {
     const d = Math.sqrt(L.rank) * (L.kind === 'flood' ? 1.6 : 1);
     S.intensity = L.power * L.level * clamp(1.3 - d / 120, 0, 1);
   });
-  const ptC = LAMPS.filter(L => L.rank < 1e12 && (L.kind === 'window' || L.kind === 'fire' || L.kind === 'bulb')).sort((a, b) => a.rank - b.rank);
+  const ptC = PT_C.sort(byRank);
   POINTS.forEach((P, i) => {
     const L = ptC[i];
     if (!L || L.rank > 90 * 90) { P.intensity = 0; return; }

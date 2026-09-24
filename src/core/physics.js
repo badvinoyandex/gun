@@ -103,7 +103,7 @@ export function syncHeights(H, i0, j0, i1, j1) {
 }
 
 /* ---------- Динамические тела ---------- */
-const MAX = () => Math.round((90 + 110 * Q.tex) * (1 - PERF.load * 0.5));
+const MAX = () => Math.round(Q.bodies * (1 - PERF.load * 0.5));
 /**
  * o: { shape: 'box'|'sphere'|'cyl'|'capsule'|btShape, size:[..], mass, pos, quat, vel, ang,
  *      mesh | sync(pos, quat, k), life, friction, restitution, damp:[lin,ang], keep, onDone, ccd }
@@ -156,7 +156,7 @@ export function addBody(o) {
   const b = {
     body, shape, ms, mesh: o.mesh || null, sync: o.sync || null, life: o.life ?? 8, age: 0, keep: !!o.keep, onDone: o.onDone || null,
     pos: new THREE.Vector3().copy(o.pos), quat: new THREE.Quaternion().copy(o.quat || _q.identity()), fade: 1, data: o.data || null, mass: o.mass,
-    float: o.float ?? 0, rad: o.rad ?? Math.max(0.05, (o.size?.[1] ?? 0.2) / 2), wet: false
+    float: o.float ?? 0, rad: o.rad ?? Math.max(0.05, (o.size?.[1] ?? 0.2) / 2), wet: false, synced: false
   };
   PHYS.bodies.push(b);
   return b;
@@ -284,24 +284,29 @@ const FAR = b => camRef && (b.pos.x - camRef.position.x) ** 2 + (b.pos.z - camRe
 export function stepPhysics(dt) {
   if (!PHYS.ready) return;
   buoyancy(dt);
-  PHYS.world.stepSimulation(dt, 3, 1 / 60);
+  // на слабых пресетах шаг крупнее и подшагов меньше: медленный кадр не тянет за собой ещё более медленную физику
+  PHYS.world.stepSimulation(dt, Q.physSub, Q.physStep);
   PHYS.steps++;
   const L = PHYS.bodies;
   for (let i = L.length - 1; i >= 0; i--) {
     const b = L[i];
     b.age += dt;
     if (!b.body) continue;
+    // срок жизни: вдали от камеры обломки живут вдвое меньше. Угасание только убывает —
+    // раньше при age < life коэффициент выходил больше 1, и доски раздувались в десятки раз
+    const life = b.keep ? Infinity : b.life * (FAR(b) ? 0.5 : 1);
+    if (b.age > life) {
+      b.fade = Math.min(b.fade, Math.max(0, 1 - (b.age - life) / 1.2));
+      if (b.fade <= 0) { killBody(b); continue; }
+    }
+    // спящее тело не двигается: не читаем трансформ и не трогаем меш
+    if (b.synced && b.fade >= 1 && !b.body.isActive()) continue;
     b.ms.getWorldTransform(T0);
     const o = T0.getOrigin(), r = T0.getRotation();
     b.pos.set(o.x(), o.y(), o.z()); b.quat.set(r.x(), r.y(), r.z(), r.w());
-    // провалился сквозь мир (редко, на стыках карты высот) — убираем
     // провалился сквозь карту высот (стык, большая скорость) — убираем
     if (b.pos.y < MAP.WATER_Y - 12 || b.pos.y < -60) { killBody(b); continue; }
-    // далеко от камеры обломки живут вдвое меньше — меньше тел в симуляции
-    if (!b.keep && b.age > b.life * (FAR(b) ? 0.5 : 1)) {
-      b.fade = Math.max(0, 1 - (b.age - b.life) / 1.2);
-      if (b.fade <= 0) { killBody(b); continue; }
-    }
+    b.synced = true;
     if (b.mesh) { b.mesh.position.copy(b.pos); b.mesh.quaternion.copy(b.quat); if (b.fade < 1) b.mesh.scale.setScalar(Math.max(0.01, b.fade)); }
     if (b.sync) b.sync(b.pos, b.quat, b.fade, b);
   }

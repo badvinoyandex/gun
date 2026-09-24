@@ -8,7 +8,7 @@ import { initPhysics, buildStaticWorld, buildPlayerProxy, stepPhysics, movePlaye
 import { buildTerrain } from './world/terrain.js';
 import { buildSky, updateSky, SKY, TIME, nextPhase, fmtTime } from './world/sky.js';
 import { buildForest, updateForestLOD, forestStats, TREES } from './world/forest.js';
-import { buildGrass, buildUndergrowth, refreshGrass, GRASS } from './world/groundcover.js';
+import { buildGrass, buildUndergrowth, refreshGrass, GRASS, updateFlora, FLORA } from './world/groundcover.js';
 import { buildLake, updateLake, planPiers } from './world/lake.js';
 import { planBuildings, buildBuildings, HOUSES } from './world/buildings.js';
 import { planMilitary, buildMilitary, updateMilitary, FIRES, MINES } from './world/military.js';
@@ -20,7 +20,7 @@ import { updateWind, WIND } from './world/wind.js';
 import { buildParticles, updateParticles, emitFires } from './fx/particles.js';
 import { buildExplosions, updateExplosions, explode, BLAST } from './fx/explosions.js';
 import { initAudio, updateAudio, AUDIO } from './fx/audio.js';
-import { buildPost, updatePost, resizePost, composer } from './fx/post.js';
+import { buildPost, updatePost, resizePost, composer, bloom } from './fx/post.js';
 import { PL, keys, spawnAt, setMode, look, updatePlayer, dropBomb, startCinematic, stopCinematic } from './game/player.js';
 import { buildMapOverlay, updateHud, toast } from './game/hud.js';
 import { buildFire, updateFire, heatAt, fireStats, FIRE, ignite } from './fx/fire.js';
@@ -131,7 +131,7 @@ function finish() {
     // логика без отрисовки: для автотестов на медленных машинах
     addBody, simulate: (dt, n = 1) => { for (let i = 0; i < n; i++) { FRAME.t += dt; updatePlayer(dt); updateExplosions(dt); stepPhysics(dt); } return PL; }, phys: PHYS,
     perf: PERF, stats: () => ({
-      calls: renderer.info.render.calls, tris: renderer.info.render.triangles, grass: GRASS.count,
+      calls: renderer.info.render.calls, tris: renderer.info.render.triangles, grass: GRASS.count, floraTiles: FLORA.tiles.length, floraDrawn: FLORA.drawn,
       ...forestStats(), colliders: COLLIDERS.length, houses: HOUSES.length, cloths: CLOTHS.length, barrels: BARRELS.length,
       mines: MINES.list.length, paths: PATHS.length, ...physStats(), ...fireStats(), ...weatherStats(), ...glassStats(), ...destructionStats(), ...structStats(), trenches: TRENCHES.length, staticDraws: draws, ...lampStats(), quality: QNAME
     })
@@ -241,6 +241,7 @@ function frame(dt, render = true) {
   updateMilitary(SKY);
   updateForestLOD();
   refreshGrass();
+  updateFlora(dt);
   stepCloth(dt, FRAME.t);
   updateBarrels(dt);
   movePlayerProxy(PL.pos.x, PL.pos.y, PL.pos.z, PL.mode === 'walk' && PL.dead <= 0);
@@ -256,7 +257,7 @@ function frame(dt, render = true) {
   updateStructs(dt);
   burnPlayer(dt, Math.max(heatAt(PL.pos.x, PL.pos.z), structHeatAt(PL.pos.x, PL.pos.z)));
   const ground = hFast(camera.position.x, camera.position.z);
-  updateParticles(dt, { night: SKY.night, h: TIME.h, fogColor: SKY.fogColor, ground });
+  updateParticles(dt, { night: SKY.night, h: TIME.h, fogColor: SKY.fogColor, ground, light: Math.max(0.12, (0.2 + 0.8 * (1 - SKY.night)) * (1 - WEATHER.ov * 0.3)) });
   updateLake(SKY);
   searchlight.intensity = PL.light ? (PL.mode === 'drone' ? 260 : 60) : 0;
   searchlight.angle = PL.mode === 'drone' ? 0.34 : 0.5;
@@ -274,7 +275,9 @@ function frame(dt, render = true) {
   updatePost(SKY, Math.min(1, BLAST.shake * 0.8 + (PL.dead > 0 ? 0.6 : 0) + PL.burn * 0.3), WEATHER.flash, camUnder ? 1 : 0);
   if (!render) return;
   // тени на слабых пресетах — раз в несколько кадров (солнце движется медленно)
-  if (Q.shadowEvery > 1) { renderer.shadowMap.autoUpdate = false; if (FRAME.n % Q.shadowEvery === 0 || BLAST.shake > 0.05) renderer.shadowMap.needsUpdate = true; }
+  const se = PERF.shadowEvery;
+  renderer.shadowMap.autoUpdate = se <= 1;
+  if (se > 1 && (FRAME.n % se === 0 || BLAST.shake > 0.05)) renderer.shadowMap.needsUpdate = true;
   composer.render();
   updateHud(dt);
 }
@@ -286,9 +289,23 @@ function adaptResolution(dt) {
   PERF.load = Math.min(1, Math.max(0, (ms - 22) / 20));
   if (!PERF.auto) return;
   let pr = PERF.pr;
-  if (ms > 36 && pr > PERF.minPr) pr = Math.max(PERF.minPr, pr - 0.1);
-  else if (ms < 18 && pr < PERF.maxPr) pr = Math.min(PERF.maxPr, pr + 0.05);
+  // сначала снижается разрешение; если и на минимуме кадр тяжёлый — лестница упрощений
+  // (реже тени, без блума, реже трава). При запасе всё возвращается в обратном порядке.
+  if (ms > 36) {
+    if (pr > PERF.minPr) pr = Math.max(PERF.minPr, pr - 0.1);
+    else if (PERF.lvl < 3) setLevel(PERF.lvl + 1);
+  } else if (ms < 19) {
+    if (PERF.lvl > 0) { if (++PERF.calm >= 3) setLevel(PERF.lvl - 1); }
+    else if (pr < PERF.maxPr) pr = Math.min(PERF.maxPr, pr + 0.05);
+  } else PERF.calm = 0;
   if (pr !== PERF.pr) { PERF.pr = pr; renderer.setPixelRatio(pr); renderer.setSize(innerWidth, innerHeight); resizePost(); }
+}
+function setLevel(l) {
+  PERF.lvl = l; PERF.calm = 0;
+  PERF.shadowEvery = Math.max(Q.shadowEvery, [1, 2, 3, 4][l]);
+  bloom.enabled = Q.bloom && l < 2;
+  const cap = [1, 1, 0.7, 0.5][l];
+  if (GRASS.cap !== cap) { GRASS.cap = cap; refreshGrass(true); }
 }
 function loop() {
   requestAnimationFrame(loop);
