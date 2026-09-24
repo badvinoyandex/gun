@@ -452,22 +452,22 @@ const STREAM_FS = /* glsl */`
   float h(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
   float n(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f); return mix(mix(h(i), h(i+vec2(1,0)), f.x), mix(h(i+vec2(0,1)), h(i+vec2(1,1)), f.x), f.y); }
   void main(){
-    // рябь течёт вниз по руслу: быстрее на перекатах
-    float sp = 0.9 + vSlope * 30.0;
-    vec2 q = vec2(vUv.x * 3.0, vUv.y * 0.9 - uT * sp);
-    float r1 = n(q * 3.0), r2 = n(q * 7.0 + 3.1), r3 = n(vec2(vUv.x * 9.0, vUv.y * 3.0 - uT * sp * 1.6));
-    vec3 nrm = normalize(vec3((r1 - 0.5) * 0.5 + (r3 - 0.5) * 0.25, 1.0, (r2 - 0.5) * 0.5));
+    // струи вытянуты вдоль течения (изотропный шум читается как гравий), на перекатах быстрее
+    float sp = 1.1 + vSlope * 40.0;
+    vec2 q = vec2(vUv.x * 8.0, vUv.y * 0.55 - uT * sp);
+    float r1 = n(q * 1.5), r2 = n(q * 3.2 + 3.1), r3 = n(vec2(vUv.x * 18.0, vUv.y * 1.4 - uT * sp * 1.6));
+    vec3 nrm = normalize(vec3((r1 - 0.5) * 0.3 + (r3 - 0.5) * 0.12, 1.0, (r2 - 0.5) * 0.25));
     vec3 V = normalize(cameraPosition - vW);
-    float fr = 0.04 + 0.96 * pow(1.0 - max(dot(nrm, V), 0.0), 5.0);
-    // вода в тенистом овраге: торфяная, отражает небо только под острым углом
-    vec3 col = mix(uDeep, uSky * 0.5, fr * 0.85);
+    float fr = pow(1.0 - max(dot(nrm, V), 0.0), 5.0);
+    // торфяная вода: тёмная, чай с зеленью; небо — только бликами под острым углом
+    // вывод в линейном цвете: небо в тени оврага отражается слабо
+    vec3 col = mix(uDeep * (0.8 + 0.4 * r1), uSky * 0.3, clamp(fr * 0.9, 0.0, 0.7));
     vec3 Hh = normalize(uSunDir + V);
-    col += uSun * pow(max(dot(nrm, Hh), 0.0), 160.0) * 1.6;
-    // пена на перекатах и у берегов
-    float edge = smoothstep(0.35, 0.5, abs(vUv.x - 0.5));
-    float foam = smoothstep(0.62, 0.8, r3 + vSlope * 18.0 + edge * 0.25) * (0.35 + vSlope * 25.0);
-    col = mix(col, vec3(0.7, 0.72, 0.68) * (0.3 + 0.35 * length(uSky)), clamp(foam * 0.6, 0.0, 0.45));
-    float a = mix(0.6, 0.88, fr) * (1.0 - smoothstep(0.42, 0.5, abs(vUv.x - 0.5)) * 0.7);
+    col += uSun * pow(max(dot(nrm, Hh), 0.0), 220.0) * 0.8;
+    // пена только на крутых перекатах, узкими струями
+    float foam = smoothstep(0.78, 0.95, r3) * smoothstep(0.012, 0.035, vSlope);
+    col = mix(col, vec3(0.18, 0.19, 0.17) * (0.4 + 0.3 * length(uSky)), foam * 0.5);
+    float a = mix(0.72, 0.9, fr) * (1.0 - smoothstep(0.4, 0.5, abs(vUv.x - 0.5)) * 0.75);
     gl_FragColor = vec4(col, a);
     #include <fog_fragment>
   }`;
@@ -488,7 +488,7 @@ function streamWater(st) {
   g.setAttribute('aSlope', new THREE.Float32BufferAttribute(aSl, 1));
   g.setIndex(idx); g.computeBoundingSphere();
   STREAM_FX.mat ??= new THREE.ShaderMaterial({
-    uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, { uT: { value: 0 }, uSky: { value: new THREE.Color(0.5, 0.6, 0.7) }, uSun: { value: new THREE.Color(1, 1, 1) }, uDeep: { value: new THREE.Color(0.1, 0.11, 0.07) }, uSunDir: { value: V(0.3, 0.8, 0.2) } }]),
+    uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, { uT: { value: 0 }, uSky: { value: new THREE.Color(0.5, 0.6, 0.7) }, uSun: { value: new THREE.Color(1, 1, 1) }, uDeep: { value: new THREE.Color(0.012, 0.014, 0.008) }, uSunDir: { value: V(0.3, 0.8, 0.2) } }]),
     vertexShader: STREAM_VS, fragmentShader: STREAM_FS, transparent: true, depthWrite: false, fog: true
   });
   const m = new THREE.Mesh(g, STREAM_FX.mat); m.renderOrder = 2; m.name = 'stream';
